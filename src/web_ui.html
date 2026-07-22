@@ -841,7 +841,7 @@
 
         // Auto domain logic on provider change
         providerSelect.addEventListener('change', () => {
-            if (currentEditingProfileId === null) {
+            if (currentEditingProfileId === 'new') {
                 if (providerSelect.value === 'github') {
                     domainInput.value = 'github.com';
                 } else if (providerSelect.value === 'gitlab') {
@@ -927,8 +927,13 @@
                     body: JSON.stringify({ id })
                 });
                 if (res.ok) {
-                    currentEditingProfileId = null; // Clear edit mode to load selected profile's default details
-                    configCardTitle.textContent = "Configure Profile";
+                    currentEditingProfileId = id; // Set to the selected profile's ID
+                    const profile = allProfiles.find(p => p.id === id);
+                    if (profile) {
+                        configCardTitle.textContent = `Edit Profile: ${profile.name}`;
+                    } else {
+                        configCardTitle.textContent = "Configure Profile";
+                    }
                     showToast("Switched active profile.");
                     fetchStatus();
                 } else {
@@ -981,7 +986,7 @@
 
         // Add Profile Button Click
         addProfileBtn.addEventListener('click', () => {
-            currentEditingProfileId = null;
+            currentEditingProfileId = 'new';
             configCardTitle.textContent = "Configure Profile";
             resetForm();
             profileNameInput.focus();
@@ -993,7 +998,7 @@
             providerSelect.value = p.provider;
             domainInput.value = p.domain;
             usernameInput.value = p.username;
-            tokenInput.value = p.token; // will be "********" if loaded from API
+            tokenInput.value = p.token; // loaded from API
             localPathInput.value = p.local_path;
             syncIntervalInput.value = p.sync_interval_secs;
         }
@@ -1103,12 +1108,24 @@
 
             // 2. Populate Config Form if NOT focused and NOT saving
             if (document.activeElement.tagName !== 'INPUT' && document.activeElement.tagName !== 'SELECT' && !isConfigSaving) {
-                if (currentEditingProfileId === null && activeProfileId) {
-                    const activeProfile = allProfiles.find(p => p.id === activeProfileId);
-                    if (activeProfile) {
-                        populateForm(activeProfile);
+                if (currentEditingProfileId !== 'new') {
+                    if (activeProfileId) {
+                        const activeProfile = allProfiles.find(p => p.id === activeProfileId);
+                        if (activeProfile) {
+                            if (currentEditingProfileId === null || currentEditingProfileId === activeProfileId) {
+                                currentEditingProfileId = activeProfileId;
+                                populateForm(activeProfile);
+                                configCardTitle.textContent = `Edit Profile: ${activeProfile.name}`;
+                            }
+                        } else {
+                            currentEditingProfileId = 'new';
+                            resetForm();
+                            configCardTitle.textContent = "Configure Profile";
+                        }
                     } else {
+                        currentEditingProfileId = 'new';
                         resetForm();
+                        configCardTitle.textContent = "Configure Profile";
                     }
                 }
             }
@@ -1164,7 +1181,7 @@
             isConfigSaving = true;
             
             const payload = {
-                id: currentEditingProfileId, // will be null if creating
+                id: currentEditingProfileId === 'new' ? null : currentEditingProfileId, // will be null if creating
                 name: profileNameInput.value.trim(),
                 provider: providerSelect.value,
                 domain: domainInput.value.trim(),
@@ -1183,12 +1200,11 @@
                 
                 if (res.ok) {
                     const resData = await res.json();
-                    showToast(currentEditingProfileId ? "Profile updated." : "Profile created successfully.");
-                    currentEditingProfileId = null;
-                    configCardTitle.textContent = "Configure Profile";
+                    showToast(currentEditingProfileId && currentEditingProfileId !== 'new' ? "Profile updated." : "Profile created successfully.");
                     
                     // Set active to the newly created/updated profile
                     if (resData.profile_id) {
+                        currentEditingProfileId = resData.profile_id;
                         await selectProfile(resData.profile_id);
                     }
                 } else {

@@ -47,11 +47,11 @@ async fn get_status(
 ) -> Json<serde_json::Value> {
     let s = state.read().await;
     
-    // Mask tokens
+    // Pass tokens to the UI (hidden by input type=password, revealable via Show button)
     let mut profiles_masked = Vec::new();
     for p in &s.profiles {
         let mut p_masked = p.clone();
-        p_masked.token = if p.token.is_empty() { "".to_string() } else { "********".to_string() };
+        p_masked.token = p.token.clone();
         profiles_masked.push(p_masked);
     }
     
