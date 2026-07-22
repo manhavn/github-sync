@@ -88,9 +88,15 @@ async fn update_config(
     Ok(Json(serde_json::Value::Object(response)))
 }
 
+#[derive(serde::Deserialize)]
+struct SyncQuery {
+    mode: Option<crate::state::SyncMode>,
+}
+
 async fn trigger_sync(
     axum::Extension(state): axum::Extension<Arc<RwLock<SyncState>>>,
     axum::Extension(trigger): axum::Extension<Arc<Notify>>,
+    axum::extract::Query(query): axum::extract::Query<SyncQuery>,
 ) -> Json<serde_json::Value> {
     let mut s = state.write().await;
     if s.status == "Syncing" {
@@ -100,7 +106,9 @@ async fn trigger_sync(
         return Json(serde_json::Value::Object(response));
     }
 
-    s.add_log("INFO", "Manual sync requested via Web UI.");
+    let mode = query.mode.unwrap_or(crate::state::SyncMode::Full);
+    s.next_sync_mode = mode;
+    s.add_log("INFO", &format!("Manual sync requested via Web API. Mode: {:?}", mode));
     trigger.notify_one();
 
     let mut response = serde_json::Map::new();

@@ -20,6 +20,13 @@ pub struct LogMessage {
     pub message: String,
 }
 
+#[derive(Serialize, Deserialize, Clone, Copy, Debug, PartialEq)]
+pub enum SyncMode {
+    Full,
+    MissingOnly,
+    UpdatesOnly,
+}
+
 #[derive(Serialize, Deserialize, Clone, Debug)]
 pub struct SyncState {
     pub config: Config,
@@ -27,6 +34,7 @@ pub struct SyncState {
     pub last_sync_time: Option<DateTime<Utc>>,
     pub repos: Vec<RepoStatus>,
     pub logs: VecDeque<LogMessage>,
+    pub next_sync_mode: SyncMode,
 }
 
 impl SyncState {
@@ -37,6 +45,7 @@ impl SyncState {
             last_sync_time: None,
             repos: Vec::new(),
             logs: VecDeque::with_capacity(100),
+            next_sync_mode: SyncMode::Full,
         }
     }
 

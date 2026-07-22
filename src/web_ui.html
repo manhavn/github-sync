@@ -569,12 +569,28 @@
 
             <div class="card glass">
                 <div class="card-title">Actions</div>
-                <button id="sync-now-btn" class="btn btn-sync" style="width: 100%;">
-                    <svg id="sync-icon" style="width: 16px; height: 16px; fill: currentColor;" viewBox="0 0 24 24">
-                        <path d="M19 8l-4 4h3c0 3.31-2.69 6-6 6-1.01 0-1.97-.25-2.8-.7l-1.46 1.46C8.97 19.54 10.43 20 12 20c4.42 0 8-3.58 8-8h3l-4-4zM6 12c0-3.31 2.69-6 6-6 1.01 0 1.97.25 2.8.7l1.46-1.46C15.03 4.46 13.57 4 12 4c-4.42 0-8 3.58-8 8H1l4 4 4-4H6z"/>
-                    </svg>
-                    <span>Force Sync Now</span>
-                </button>
+                <div style="display: flex; flex-direction: column; gap: 0.75rem;">
+                    <button id="sync-full-btn" class="btn btn-sync" style="width: 100%;">
+                        <svg class="sync-icon" style="width: 16px; height: 16px; fill: currentColor;" viewBox="0 0 24 24">
+                            <path d="M19 8l-4 4h3c0 3.31-2.69 6-6 6-1.01 0-1.97-.25-2.8-.7l-1.46 1.46C8.97 19.54 10.43 20 12 20c4.42 0 8-3.58 8-8h3l-4-4zM6 12c0-3.31 2.69-6 6-6 1.01 0 1.97.25 2.8.7l1.46-1.46C15.03 4.46 13.57 4 12 4c-4.42 0-8 3.58-8 8H1l4 4 4-4H6z"/>
+                        </svg>
+                        <span>Force Full Sync</span>
+                    </button>
+                    
+                    <button id="sync-missing-btn" class="btn" style="width: 100%; background: linear-gradient(135deg, var(--primary), #a855f7); box-shadow: 0 4px 10px rgba(99, 102, 241, 0.2);">
+                        <svg class="sync-icon" style="width: 16px; height: 16px; fill: currentColor;" viewBox="0 0 24 24">
+                            <path d="M19 13h-6v6h-2v-6H5v-2h6V5h2v6h6v2z"/>
+                        </svg>
+                        <span>Sync Missing Only</span>
+                    </button>
+                    
+                    <button id="sync-updates-btn" class="btn" style="width: 100%; background: linear-gradient(135deg, var(--warning), #d97706); box-shadow: 0 4px 10px rgba(245, 158, 11, 0.2);">
+                        <svg class="sync-icon" style="width: 16px; height: 16px; fill: currentColor;" viewBox="0 0 24 24">
+                            <path d="M21 10.12h-6.78l2.74-2.82c-2.73-2.7-7.15-2.7-9.88 0-2.73 2.71-2.73 7.09 0 9.8 2.73 2.71 7.15 2.71 9.88 0 1.36-1.35 2.04-2.92 2.04-4.83h2.3c0 2.41-1.02 4.79-2.99 6.74-3.95 3.91-10.35 3.91-14.3 0-3.95-3.91-3.95-10.27 0-14.18 3.95-3.91 10.35-3.91 14.3 0l2.71-2.79v8.08zm-9 4.18v-4.18l3.12 2.09-3.12 2.09z"/>
+                        </svg>
+                        <span>Pull Updates Only (Offline API)</span>
+                    </button>
+                </div>
             </div>
         </div>
 
@@ -653,8 +669,10 @@
         const syncIntervalInput = document.getElementById('sync-interval');
         const webPortInput = document.getElementById('web-port');
         
-        const syncNowBtn = document.getElementById('sync-now-btn');
-        const syncIcon = document.getElementById('sync-icon');
+        const syncFullBtn = document.getElementById('sync-full-btn');
+        const syncMissingBtn = document.getElementById('sync-missing-btn');
+        const syncUpdatesBtn = document.getElementById('sync-updates-btn');
+        const syncIcons = document.querySelectorAll('.sync-icon');
         const systemStatusDot = document.getElementById('system-status-dot');
         const systemStatusText = document.getElementById('system-status-text');
         
@@ -811,12 +829,16 @@
             
             if (status === 'Syncing') {
                 systemStatusDot.className = "status-dot syncing";
-                syncIcon.classList.add('spin');
-                syncNowBtn.disabled = true;
+                syncIcons.forEach(icon => icon.classList.add('spin'));
+                syncFullBtn.disabled = true;
+                syncMissingBtn.disabled = true;
+                syncUpdatesBtn.disabled = true;
             } else {
                 systemStatusDot.className = `status-dot ${status === 'Error' ? 'error' : 'idle'}`;
-                syncIcon.classList.remove('spin');
-                syncNowBtn.disabled = false;
+                syncIcons.forEach(icon => icon.classList.remove('spin'));
+                syncFullBtn.disabled = false;
+                syncMissingBtn.disabled = false;
+                syncUpdatesBtn.disabled = false;
             }
 
             // Stats
@@ -876,16 +898,18 @@
             }
         });
 
-        // Sync Now button click
-        syncNowBtn.addEventListener('click', async () => {
+        // Sync action triggers
+        async function runSync(mode) {
             try {
-                const res = await fetch('/api/sync', { method: 'POST' });
+                const res = await fetch(`/api/sync?mode=${mode}`, { method: 'POST' });
                 if (res.ok) {
                     const data = await res.json();
                     if (data.success) {
-                        showToast("Manual sync initiated.");
-                        syncIcon.classList.add('spin');
-                        syncNowBtn.disabled = true;
+                        showToast(`Sync (${mode}) initiated.`);
+                        syncIcons.forEach(icon => icon.classList.add('spin'));
+                        syncFullBtn.disabled = true;
+                        syncMissingBtn.disabled = true;
+                        syncUpdatesBtn.disabled = true;
                     } else {
                         showToast(data.message || "Failed to trigger sync.", "error");
                     }
@@ -898,7 +922,11 @@
             } finally {
                 fetchStatus();
             }
-        });
+        }
+
+        syncFullBtn.addEventListener('click', () => runSync('Full'));
+        syncMissingBtn.addEventListener('click', () => runSync('MissingOnly'));
+        syncUpdatesBtn.addEventListener('click', () => runSync('UpdatesOnly'));
 
         // Clear console
         clearConsoleBtn.addEventListener('click', () => {

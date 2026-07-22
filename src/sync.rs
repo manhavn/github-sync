@@ -56,12 +56,15 @@ impl SyncWorker {
     }
 
     pub async fn perform_sync(&self) -> Result<(), String> {
-        let (username, token, local_path) = {
-            let s = self.state.read().await;
+        let (username, token, local_path, sync_mode) = {
+            let mut s = self.state.write().await;
+            let mode = s.next_sync_mode;
+            s.next_sync_mode = crate::state::SyncMode::Full; // Reset for next cycle
             (
                 s.config.github_username.clone(),
                 s.config.github_token.clone(),
                 s.config.local_path.clone(),
+                mode,
             )
         };
 
@@ -82,23 +85,28 @@ impl SyncWorker {
         {
             let mut s = self.state.write().await;
             s.status = "Syncing".to_string();
-            s.add_log("INFO", "Starting GitHub repositories sync...");
+            s.add_log("INFO", &format!("Starting repositories sync (Mode: {:?})...", sync_mode));
         }
 
-        // Fetch all repos from GitHub
-        let repos = match fetch_all_repos(&username, &token).await {
-            Ok(r) => r,
-            Err(e) => {
-                let mut s = self.state.write().await;
-                s.status = "Error".to_string();
-                s.add_log("ERROR", &format!("Failed to fetch repository list from GitHub: {}", e));
-                return Err(e);
+        // Resolve repository list based on sync mode
+        let repos = if sync_mode == crate::state::SyncMode::UpdatesOnly {
+            discover_local_repos(&local_path).await
+        } else {
+            // Fetch all repos from GitHub
+            match fetch_all_repos(&username, &token).await {
+                Ok(r) => r,
+                Err(e) => {
+                    let mut s = self.state.write().await;
+                    s.status = "Error".to_string();
+                    s.add_log("ERROR", &format!("Failed to fetch repository list from GitHub: {}", e));
+                    return Err(e);
+                }
             }
         };
 
         {
             let mut s = self.state.write().await;
-            s.add_log("INFO", &format!("Found {} repositories on GitHub.", repos.len()));
+            s.add_log("INFO", &format!("Found {} repositories to process.", repos.len()));
             // Sync internal list in state
             for gr in &repos {
                 if !s.repos.iter().any(|r| r.full_name == gr.full_name) {
@@ -130,6 +138,16 @@ impl SyncWorker {
             let mut repo_dir = local_base_path.clone();
             repo_dir.push(owner_name);
             repo_dir.push(repo_name);
+
+            // If mode is MissingOnly, skip if the directory already exists
+            if repo_dir.exists() && sync_mode == crate::state::SyncMode::MissingOnly {
+                let mut s = self.state.write().await;
+                s.add_log("INFO", &format!("[{}/{}] Skipping {} (already exists locally).", idx + 1, repos.len(), full_name));
+                if let Some(r) = s.repos.iter_mut().find(|r| r.full_name == *full_name) {
+                    r.status = "Success".to_string(); // count as success/ready
+                }
+                continue;
+            }
 
             {
                 let mut s = self.state.write().await;
@@ -170,6 +188,57 @@ impl SyncWorker {
 
         Ok(())
     }
+}
+
+async fn discover_local_repos(local_path: &str) -> Vec<GithubRepo> {
+    let mut repos = Vec::new();
+    let base_path = Path::new(local_path);
+    let mut owner_dirs = match tokio::fs::read_dir(base_path).await {
+        Ok(dirs) => dirs,
+        Err(_) => return repos,
+    };
+
+    while let Some(owner_entry) = owner_dirs.next_entry().await.ok().flatten() {
+        let owner_path = owner_entry.path();
+        if !owner_path.is_dir() {
+            continue;
+        }
+        let owner_name = match owner_path.file_name().and_then(|s| s.to_str()) {
+            Some(name) => name.to_string(),
+            None => continue,
+        };
+
+        let mut repo_dirs = match tokio::fs::read_dir(&owner_path).await {
+            Ok(dirs) => dirs,
+            Err(_) => continue,
+        };
+
+        while let Some(repo_entry) = repo_dirs.next_entry().await.ok().flatten() {
+            let repo_path = repo_entry.path();
+            if !repo_path.is_dir() {
+                continue;
+            }
+            let repo_name = match repo_path.file_name().and_then(|s| s.to_str()) {
+                Some(name) => name.to_string(),
+                None => continue,
+            };
+
+            let mut git_dir = repo_path.clone();
+            git_dir.push(".git");
+            if git_dir.exists() {
+                repos.push(GithubRepo {
+                    name: repo_name.clone(),
+                    full_name: format!("{}/{}", owner_name, repo_name),
+                    clone_url: format!("https://github.com/{}/{}.git", owner_name, repo_name),
+                    private: false, // Default fallback
+                    owner: GithubOwner {
+                        login: owner_name.clone(),
+                    },
+                });
+            }
+        }
+    }
+    repos
 }
 
 async fn fetch_all_repos(_username: &str, token: &str) -> Result<Vec<GithubRepo>, String> {
