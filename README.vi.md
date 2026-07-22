@@ -13,6 +13,10 @@ Dịch vụ đồng bộ chạy ẩn dưới nền (background service) an toàn
 - **Xác Thực An Toàn**: Sử dụng tính năng **Git Credential Helper** động và tạm thời thay vì lưu trực tiếp Personal Access Token (PAT) của bạn vào các tệp tin `.git/config` trên ổ đĩa.
 - **Phân Loại Tự Động**: Tự động phân chia thư mục theo cấu trúc phân cấp sạch sẽ dạng: `[thư_mục_cấu_hình]/[tên_owner_repo]/[tên_repo]`.
 - **Điều Khiển Qua REST API**: Các endpoint API cho phép theo dõi tiến trình, cập nhật cấu hình động, kiểm tra lỗi và ép buộc chu kỳ đồng bộ ngay lập tức.
+- **Nhiều Chế Độ Đồng Bộ Thủ Công**:
+  - **Force Full Sync (Đồng bộ đầy đủ)**: Kết nối tới GitHub API và đồng bộ tất cả các repo (clone repo chưa có, pull repo đã có).
+  - **Sync Missing Only (Chỉ đồng bộ repo thiếu)**: Kết nối tới GitHub API nhưng chỉ clone các repo chưa tồn tại dưới local (bỏ qua repo đã có để tiết kiệm thời gian).
+  - **Pull Updates Only (Chỉ kéo cập nhật - Offline API)**: Quét thư mục local và chạy `git pull` cập nhật trực tiếp, hoàn toàn bỏ qua việc gọi GitHub API để tránh bị giới hạn API rate limit.
 
 ---
 

@@ -13,6 +13,10 @@ A secure, background synchronization service written in Rust that automatically 
 - **Secure Authentication**: Uses an ephemeral Git credential helper rather than storing your Personal Access Token (PAT) inside `.git/config` files on disk.
 - **Automatic Organization**: Saves repositories to a clean hierarchy of `[configured_path]/[owner_username]/[repo_name]`.
 - **REST API Control**: Endpoints to inspect synchronization statuses, track errors, view log history, and trigger manual sync cycles.
+- **Multiple Sync Modes**:
+  - **Force Full Sync**: Connects to GitHub API and updates all repositories (clones missing, pulls existing).
+  - **Sync Missing Only**: Connects to GitHub API but only clones missing repositories (skips existing ones to save time).
+  - **Pull Updates Only (Offline API)**: Bypasses GitHub API rate limits by scanning your local directory and pulling updates for existing repos offline relative to the API.
 
 ---
 
