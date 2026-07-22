@@ -1,0 +1,913 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>GitSync Daemon Dashboard</title>
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link href="https://fonts.googleapis.com/css2?family=Plus+Jakarta+Sans:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet">
+    <style>
+        :root {
+            --bg-color: #080c14;
+            --panel-bg: rgba(15, 23, 42, 0.65);
+            --panel-border: rgba(255, 255, 255, 0.06);
+            --text-main: #f8fafc;
+            --text-muted: #94a3b8;
+            
+            --primary: #6366f1;
+            --primary-hover: #4f46e5;
+            --primary-glow: rgba(99, 102, 241, 0.3);
+            
+            --success: #10b981;
+            --success-glow: rgba(16, 185, 129, 0.25);
+            
+            --warning: #f59e0b;
+            --warning-glow: rgba(245, 158, 11, 0.25);
+            
+            --danger: #ef4444;
+            --danger-glow: rgba(239, 68, 68, 0.25);
+            
+            --transition-speed: 0.2s;
+        }
+
+        * {
+            box-sizing: border-box;
+            margin: 0;
+            padding: 0;
+        }
+
+        body {
+            font-family: 'Plus Jakarta Sans', sans-serif;
+            background-color: var(--bg-color);
+            color: var(--text-main);
+            min-height: 100vh;
+            background-image: 
+                radial-gradient(circle at 10% 20%, rgba(99, 102, 241, 0.05) 0%, transparent 40%),
+                radial-gradient(circle at 90% 80%, rgba(16, 185, 129, 0.03) 0%, transparent 40%);
+            background-attachment: fixed;
+            padding: 2rem;
+            display: flex;
+            flex-direction: column;
+            gap: 2rem;
+        }
+
+        /* Glassmorphism utility */
+        .glass {
+            background: var(--panel-bg);
+            backdrop-filter: blur(12px);
+            -webkit-backdrop-filter: blur(12px);
+            border: 1px solid var(--panel-border);
+            border-radius: 16px;
+            box-shadow: 0 8px 32px 0 rgba(0, 0, 0, 0.37);
+        }
+
+        /* Header */
+        header {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            padding: 1.5rem 2rem;
+        }
+
+        .logo-section {
+            display: flex;
+            align-items: center;
+            gap: 1rem;
+        }
+
+        .logo-icon {
+            width: 40px;
+            height: 40px;
+            background: linear-gradient(135deg, var(--primary), #a855f7);
+            border-radius: 10px;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            font-weight: 700;
+            font-size: 1.25rem;
+            box-shadow: 0 0 15px var(--primary-glow);
+        }
+
+        .logo-text h1 {
+            font-size: 1.25rem;
+            font-weight: 700;
+            letter-spacing: -0.025em;
+        }
+
+        .logo-text p {
+            font-size: 0.8rem;
+            color: var(--text-muted);
+        }
+
+        .status-badge {
+            display: flex;
+            align-items: center;
+            gap: 0.5rem;
+            padding: 0.5rem 1rem;
+            border-radius: 9999px;
+            font-size: 0.85rem;
+            font-weight: 600;
+            text-transform: uppercase;
+            letter-spacing: 0.05em;
+            background: rgba(255, 255, 255, 0.03);
+            border: 1px solid rgba(255, 255, 255, 0.05);
+        }
+
+        .status-dot {
+            width: 8px;
+            height: 8px;
+            border-radius: 50%;
+            display: inline-block;
+        }
+
+        .status-dot.idle {
+            background-color: var(--text-muted);
+            box-shadow: 0 0 8px var(--text-muted);
+        }
+
+        .status-dot.syncing {
+            background-color: var(--primary);
+            box-shadow: 0 0 10px var(--primary);
+            animation: pulse 1.5s infinite;
+        }
+
+        .status-dot.error {
+            background-color: var(--danger);
+            box-shadow: 0 0 10px var(--danger);
+        }
+
+        /* Dashboard Layout */
+        .dashboard-grid {
+            display: grid;
+            grid-template-columns: 380px 1fr;
+            gap: 2rem;
+            flex-grow: 1;
+        }
+
+        @media (max-width: 1024px) {
+            .dashboard-grid {
+                grid-template-columns: 1fr;
+            }
+        }
+
+        /* Sidebar Forms */
+        .sidebar {
+            display: flex;
+            flex-direction: column;
+            gap: 1.5rem;
+        }
+
+        .card {
+            padding: 1.75rem;
+            display: flex;
+            flex-direction: column;
+            gap: 1.25rem;
+        }
+
+        .card-title {
+            font-size: 1.1rem;
+            font-weight: 600;
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+            border-bottom: 1px solid rgba(255, 255, 255, 0.05);
+            padding-bottom: 0.75rem;
+            margin-bottom: 0.25rem;
+        }
+
+        /* Form Controls */
+        .form-group {
+            display: flex;
+            flex-direction: column;
+            gap: 0.5rem;
+        }
+
+        label {
+            font-size: 0.85rem;
+            font-weight: 500;
+            color: var(--text-muted);
+        }
+
+        input {
+            width: 100%;
+            background: rgba(15, 23, 42, 0.8);
+            border: 1px solid rgba(255, 255, 255, 0.08);
+            border-radius: 8px;
+            padding: 0.75rem 1rem;
+            color: var(--text-main);
+            font-family: inherit;
+            font-size: 0.9rem;
+            transition: all var(--transition-speed);
+        }
+
+        input:focus {
+            outline: none;
+            border-color: var(--primary);
+            box-shadow: 0 0 0 3px var(--primary-glow);
+        }
+
+        .password-container {
+            position: relative;
+        }
+
+        .password-toggle {
+            position: absolute;
+            right: 12px;
+            top: 50%;
+            transform: translateY(-50%);
+            background: none;
+            border: none;
+            color: var(--text-muted);
+            cursor: pointer;
+            font-size: 0.8rem;
+            padding: 0.25rem;
+        }
+
+        .btn {
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            gap: 0.5rem;
+            background: var(--primary);
+            color: white;
+            border: none;
+            border-radius: 8px;
+            padding: 0.75rem 1.2rem;
+            font-weight: 600;
+            font-size: 0.9rem;
+            cursor: pointer;
+            transition: all var(--transition-speed);
+        }
+
+        .btn:hover {
+            background: var(--primary-hover);
+            transform: translateY(-1px);
+            box-shadow: 0 4px 12px var(--primary-glow);
+        }
+
+        .btn:active {
+            transform: translateY(0);
+        }
+
+        .btn-sync {
+            background: linear-gradient(135deg, #10b981, #059669);
+            box-shadow: 0 4px 10px rgba(16, 185, 129, 0.2);
+        }
+
+        .btn-sync:hover {
+            background: linear-gradient(135deg, #059669, #047857);
+            box-shadow: 0 6px 15px rgba(16, 185, 129, 0.3);
+        }
+
+        /* Main Workspace */
+        .main-content {
+            display: flex;
+            flex-direction: column;
+            gap: 2rem;
+        }
+
+        /* Stat Cards */
+        .stats-row {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
+            gap: 1.5rem;
+        }
+
+        .stat-card {
+            padding: 1.25rem 1.5rem;
+            display: flex;
+            flex-direction: column;
+            gap: 0.5rem;
+        }
+
+        .stat-label {
+            font-size: 0.8rem;
+            color: var(--text-muted);
+            font-weight: 500;
+        }
+
+        .stat-value {
+            font-size: 1.5rem;
+            font-weight: 700;
+        }
+
+        /* Repository Section */
+        .repo-section {
+            flex-grow: 1;
+            display: flex;
+            flex-direction: column;
+            min-height: 400px;
+        }
+
+        .repo-controls {
+            display: flex;
+            gap: 1rem;
+            margin-bottom: 1rem;
+            align-items: center;
+        }
+
+        .search-input {
+            flex-grow: 1;
+        }
+
+        .repo-table-container {
+            overflow-x: auto;
+            flex-grow: 1;
+        }
+
+        table {
+            width: 100%;
+            border-collapse: collapse;
+            text-align: left;
+        }
+
+        th {
+            padding: 1rem;
+            font-size: 0.8rem;
+            color: var(--text-muted);
+            text-transform: uppercase;
+            font-weight: 600;
+            letter-spacing: 0.05em;
+            border-bottom: 1px solid rgba(255, 255, 255, 0.05);
+        }
+
+        td {
+            padding: 1rem;
+            font-size: 0.9rem;
+            border-bottom: 1px solid rgba(255, 255, 255, 0.03);
+        }
+
+        tr:hover td {
+            background: rgba(255, 255, 255, 0.01);
+        }
+
+        .repo-name-col {
+            display: flex;
+            flex-direction: column;
+            gap: 0.25rem;
+        }
+
+        .repo-fullname {
+            font-weight: 600;
+        }
+
+        .repo-tags {
+            display: flex;
+            gap: 0.5rem;
+        }
+
+        .tag {
+            font-size: 0.7rem;
+            padding: 0.1rem 0.4rem;
+            border-radius: 4px;
+            font-weight: 600;
+            text-transform: uppercase;
+        }
+
+        .tag.private {
+            background: rgba(245, 158, 11, 0.1);
+            color: var(--warning);
+            border: 1px solid rgba(245, 158, 11, 0.2);
+        }
+
+        .tag.public {
+            background: rgba(99, 102, 241, 0.1);
+            color: var(--primary);
+            border: 1px solid rgba(99, 102, 241, 0.2);
+        }
+
+        .badge {
+            font-size: 0.75rem;
+            padding: 0.25rem 0.5rem;
+            border-radius: 6px;
+            font-weight: 600;
+            display: inline-flex;
+            align-items: center;
+            gap: 0.25rem;
+        }
+
+        .badge.success {
+            background: rgba(16, 185, 129, 0.1);
+            color: var(--success);
+        }
+
+        .badge.failed {
+            background: rgba(239, 68, 68, 0.1);
+            color: var(--danger);
+        }
+
+        .badge.syncing {
+            background: rgba(99, 102, 241, 0.1);
+            color: var(--primary);
+        }
+
+        .badge.idle {
+            background: rgba(255, 255, 255, 0.05);
+            color: var(--text-muted);
+        }
+
+        /* Logs console */
+        .logs-section {
+            display: flex;
+            flex-direction: column;
+            gap: 0.75rem;
+        }
+
+        .console {
+            background: #04060a;
+            border: 1px solid rgba(255, 255, 255, 0.05);
+            border-radius: 10px;
+            padding: 1rem;
+            height: 250px;
+            overflow-y: auto;
+            font-family: 'JetBrains Mono', monospace;
+            font-size: 0.8rem;
+            line-height: 1.5;
+            display: flex;
+            flex-direction: column;
+            gap: 0.25rem;
+        }
+
+        .log-entry {
+            display: flex;
+            gap: 0.75rem;
+        }
+
+        .log-time {
+            color: #555e70;
+            flex-shrink: 0;
+        }
+
+        .log-level {
+            font-weight: bold;
+            flex-shrink: 0;
+            width: 50px;
+        }
+
+        .log-level.INFO { color: #569cd6; }
+        .log-level.WARN { color: var(--warning); }
+        .log-level.ERROR { color: var(--danger); }
+
+        .log-text {
+            color: #d4d4d4;
+            word-break: break-all;
+        }
+
+        /* Notification Toast */
+        .toast {
+            position: fixed;
+            bottom: 2rem;
+            right: 2rem;
+            padding: 1rem 1.5rem;
+            border-radius: 8px;
+            color: white;
+            font-size: 0.9rem;
+            font-weight: 500;
+            display: flex;
+            align-items: center;
+            gap: 0.75rem;
+            z-index: 1000;
+            transform: translateY(100px);
+            opacity: 0;
+            transition: all 0.3s cubic-bezier(0.175, 0.885, 0.32, 1.275);
+            box-shadow: 0 10px 25px rgba(0,0,0,0.5);
+        }
+
+        .toast.show {
+            transform: translateY(0);
+            opacity: 1;
+        }
+
+        .toast.toast-success {
+            background: rgba(16, 185, 129, 0.9);
+            border: 1px solid var(--success);
+        }
+
+        .toast.toast-error {
+            background: rgba(239, 68, 68, 0.9);
+            border: 1px solid var(--danger);
+        }
+
+        /* Animations */
+        @keyframes pulse {
+            0% {
+                transform: scale(1);
+                opacity: 1;
+            }
+            50% {
+                transform: scale(1.3);
+                opacity: 0.5;
+            }
+            100% {
+                transform: scale(1);
+                opacity: 1;
+            }
+        }
+
+        .spin {
+            animation: spin 1s linear infinite;
+        }
+
+        @keyframes spin {
+            from { transform: rotate(0deg); }
+            to { transform: rotate(360deg); }
+        }
+    </style>
+</head>
+<body>
+    <header class="glass">
+        <div class="logo-section">
+            <div class="logo-icon">GS</div>
+            <div class="logo-text">
+                <h1>GitSync Daemon</h1>
+                <p>GitHub Repository Local Sync & Mirror Service</p>
+            </div>
+        </div>
+        <div class="status-badge" id="system-status-container">
+            <span class="status-dot idle" id="system-status-dot"></span>
+            <span id="system-status-text">Checking...</span>
+        </div>
+    </header>
+
+    <div class="dashboard-grid">
+        <!-- Configuration and Trigger Sidebar -->
+        <div class="sidebar">
+            <div class="card glass">
+                <div class="card-title">
+                    Configuration
+                </div>
+                <form id="config-form">
+                    <div class="form-group" style="margin-bottom: 1rem;">
+                        <label for="username">GitHub Username</label>
+                        <input type="text" id="username" required placeholder="e.g. octocat">
+                    </div>
+                    <div class="form-group" style="margin-bottom: 1rem;">
+                        <label for="token">Personal Access Token (PAT)</label>
+                        <div class="password-container">
+                            <input type="password" id="token" required placeholder="ghp_xxxxxxxxxxxx">
+                            <button type="button" class="password-toggle" id="token-toggle">Show</button>
+                        </div>
+                    </div>
+                    <div class="form-group" style="margin-bottom: 1rem;">
+                        <label for="local-path">Local Destination Path</label>
+                        <input type="text" id="local-path" required placeholder="e.g. /home/user/github_sync">
+                    </div>
+                    <div class="form-group" style="margin-bottom: 1rem;">
+                        <label for="sync-interval">Sync Interval (seconds)</label>
+                        <input type="number" id="sync-interval" required min="10" placeholder="3600">
+                    </div>
+                    <div class="form-group" style="margin-bottom: 1.5rem;">
+                        <label for="web-port">Web UI Port (Requires Restart)</label>
+                        <input type="number" id="web-port" required min="1024" max="65535" placeholder="9090">
+                    </div>
+                    <button type="submit" class="btn" style="width: 100%;">
+                        Save Configuration
+                    </button>
+                </form>
+            </div>
+
+            <div class="card glass">
+                <div class="card-title">Actions</div>
+                <button id="sync-now-btn" class="btn btn-sync" style="width: 100%;">
+                    <svg id="sync-icon" style="width: 16px; height: 16px; fill: currentColor;" viewBox="0 0 24 24">
+                        <path d="M19 8l-4 4h3c0 3.31-2.69 6-6 6-1.01 0-1.97-.25-2.8-.7l-1.46 1.46C8.97 19.54 10.43 20 12 20c4.42 0 8-3.58 8-8h3l-4-4zM6 12c0-3.31 2.69-6 6-6 1.01 0 1.97.25 2.8.7l1.46-1.46C15.03 4.46 13.57 4 12 4c-4.42 0-8 3.58-8 8H1l4 4 4-4H6z"/>
+                    </svg>
+                    <span>Force Sync Now</span>
+                </button>
+            </div>
+        </div>
+
+        <!-- Main Workspace -->
+        <div class="main-content">
+            <!-- Stats -->
+            <div class="stats-row">
+                <div class="stat-card glass">
+                    <span class="stat-label">Total Repositories</span>
+                    <span class="stat-value" id="stat-total">0</span>
+                </div>
+                <div class="stat-card glass">
+                    <span class="stat-label">Last Sync Completed</span>
+                    <span class="stat-value" id="stat-last-sync" style="font-size: 1.1rem; line-height: 1.8;">Never</span>
+                </div>
+                <div class="stat-card glass">
+                    <span class="stat-label">Sync Interval</span>
+                    <span class="stat-value" id="stat-interval">0s</span>
+                </div>
+            </div>
+
+            <!-- Repository List -->
+            <div class="repo-section card glass">
+                <div class="card-title">
+                    Tracked Repositories
+                </div>
+                <div class="repo-controls">
+                    <input type="text" id="repo-search" class="search-input" placeholder="Search repositories by name...">
+                </div>
+                <div class="repo-table-container">
+                    <table>
+                        <thead>
+                            <tr>
+                                <th>Repository</th>
+                                <th>Status</th>
+                                <th>Last Sync</th>
+                                <th>Details</th>
+                            </tr>
+                        </thead>
+                        <tbody id="repo-list-body">
+                            <tr>
+                                <td colspan="4" style="text-align: center; color: var(--text-muted); padding: 2rem;">
+                                    No repositories tracked yet. Fill configuration to fetch and synchronize.
+                                </td>
+                            </tr>
+                        </tbody>
+                    </table>
+                </div>
+            </div>
+
+            <!-- Console Logs -->
+            <div class="logs-section">
+                <div style="display: flex; justify-content: space-between; align-items: center;">
+                    <span style="font-size: 1rem; font-weight: 600;">Service Logs</span>
+                    <button id="clear-console-btn" style="background: none; border: none; color: var(--text-muted); cursor: pointer; font-size: 0.8rem; font-family: inherit;">Clear Console View</button>
+                </div>
+                <div class="console" id="console-logs">
+                    <!-- Logs will go here -->
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- Toast message -->
+    <div id="toast" class="toast">
+        <span id="toast-message">Success!</span>
+    </div>
+
+    <script>
+        // DOM Elements
+        const configForm = document.getElementById('config-form');
+        const usernameInput = document.getElementById('username');
+        const tokenInput = document.getElementById('token');
+        const tokenToggle = document.getElementById('token-toggle');
+        const localPathInput = document.getElementById('local-path');
+        const syncIntervalInput = document.getElementById('sync-interval');
+        const webPortInput = document.getElementById('web-port');
+        
+        const syncNowBtn = document.getElementById('sync-now-btn');
+        const syncIcon = document.getElementById('sync-icon');
+        const systemStatusDot = document.getElementById('system-status-dot');
+        const systemStatusText = document.getElementById('system-status-text');
+        
+        const statTotal = document.getElementById('stat-total');
+        const statLastSync = document.getElementById('stat-last-sync');
+        const statInterval = document.getElementById('stat-interval');
+        
+        const repoSearch = document.getElementById('repo-search');
+        const repoListBody = document.getElementById('repo-list-body');
+        const consoleLogs = document.getElementById('console-logs');
+        const clearConsoleBtn = document.getElementById('clear-console-btn');
+        
+        const toast = document.getElementById('toast');
+        const toastMessage = document.getElementById('toast-message');
+
+        // State storage
+        let allRepos = [];
+        let isConfigSaving = false;
+
+        // Toggle Token Visibility
+        tokenToggle.addEventListener('click', () => {
+            if (tokenInput.type === 'password') {
+                tokenInput.type = 'text';
+                tokenToggle.textContent = 'Hide';
+            } else {
+                tokenInput.type = 'password';
+                tokenToggle.textContent = 'Show';
+            }
+        });
+
+        // Toast Helper
+        function showToast(message, type = 'success') {
+            toast.className = `toast toast-${type} show`;
+            toastMessage.textContent = message;
+            setTimeout(() => {
+                toast.classList.remove('show');
+            }, 3000);
+        }
+
+        // Fetch dashboard status
+        async function fetchStatus() {
+            try {
+                const res = await fetch('/api/status');
+                if (!res.ok) throw new Error("HTTP error " + res.status);
+                const data = await res.json();
+                updateUI(data);
+            } catch (err) {
+                console.error("Error fetching status:", err);
+                systemStatusDot.className = "status-dot error";
+                systemStatusText.textContent = "Offline / Connection Lost";
+            }
+        }
+
+        // Render repositories list
+        function renderRepos(repos) {
+            const query = repoSearch.value.toLowerCase().trim();
+            const filtered = repos.filter(r => 
+                r.name.toLowerCase().includes(query) || 
+                r.full_name.toLowerCase().includes(query)
+            );
+
+            if (filtered.length === 0) {
+                repoListBody.innerHTML = `
+                    <tr>
+                        <td colspan="4" style="text-align: center; color: var(--text-muted); padding: 2rem;">
+                            ${repos.length === 0 ? 'No repositories found.' : 'No matching repositories found.'}
+                        </td>
+                    </tr>
+                `;
+                return;
+            }
+
+            repoListBody.innerHTML = filtered.map(r => {
+                let badgeClass = 'idle';
+                let statusText = r.status;
+                if (r.status === 'Success') badgeClass = 'success';
+                else if (r.status === 'Failed') badgeClass = 'failed';
+                else if (r.status === 'Cloning' || r.status === 'Pulling') badgeClass = 'syncing';
+                
+                const lastSyncStr = r.last_sync ? new Date(r.last_sync).toLocaleString() : 'Never';
+                const tagClass = r.is_private ? 'private' : 'public';
+                const tagText = r.is_private ? 'Private' : 'Public';
+                
+                let errorDetails = '';
+                if (r.error) {
+                    errorDetails = `<div style="color: var(--danger); font-size: 0.75rem; margin-top: 0.25rem; font-family: monospace;">${escapeHtml(r.error)}</div>`;
+                }
+
+                return `
+                    <tr>
+                        <td>
+                            <div class="repo-name-col">
+                                <span class="repo-fullname">${escapeHtml(r.full_name)}</span>
+                                <div class="repo-tags">
+                                    <span class="tag ${tagClass}">${tagText}</span>
+                                </div>
+                            </div>
+                        </td>
+                        <td>
+                            <span class="badge ${badgeClass}">${statusText}</span>
+                            ${errorDetails}
+                        </td>
+                        <td>${lastSyncStr}</td>
+                        <td><span style="font-size: 0.8rem; color: var(--text-muted);">Local mirror configured</span></td>
+                    </tr>
+                `;
+            }).join('');
+        }
+
+        function escapeHtml(str) {
+            return str
+                .replace(/&/g, "&amp;")
+                .replace(/</g, "&lt;")
+                .replace(/>/g, "&gt;")
+                .replace(/"/g, "&quot;")
+                .replace(/'/g, "&#039;");
+        }
+
+        // Render console logs
+        function renderLogs(logs) {
+            // Keep track of scroll position to auto-scroll if user was at the bottom
+            const isScrolledToBottom = consoleLogs.scrollHeight - consoleLogs.clientHeight <= consoleLogs.scrollTop + 10;
+            
+            consoleLogs.innerHTML = logs.map(log => {
+                const timeStr = new Date(log.timestamp).toLocaleTimeString();
+                return `
+                    <div class="log-entry">
+                        <span class="log-time">[${timeStr}]</span>
+                        <span class="log-level ${log.level}">${log.level}</span>
+                        <span class="log-text">${escapeHtml(log.message)}</span>
+                    </div>
+                `;
+            }).join('');
+
+            if (isScrolledToBottom) {
+                consoleLogs.scrollTop = consoleLogs.scrollHeight;
+            }
+        }
+
+        // Update complete UI based on API state
+        function updateUI(data) {
+            // Configuration values (only update when the form is NOT active/dirty and we are not currently saving config)
+            if (document.activeElement.tagName !== 'INPUT' && !isConfigSaving) {
+                usernameInput.value = data.config.github_username || '';
+                tokenInput.value = data.config.github_token || '';
+                localPathInput.value = data.config.local_path || '';
+                syncIntervalInput.value = data.config.sync_interval_secs || 3600;
+                webPortInput.value = data.config.web_port || 9090;
+            }
+
+            // Sync Status
+            const status = data.status; // "Idle", "Syncing", "Error"
+            systemStatusText.textContent = status === 'Syncing' ? 'Syncing Repositories...' : `Daemon: ${status}`;
+            
+            if (status === 'Syncing') {
+                systemStatusDot.className = "status-dot syncing";
+                syncIcon.classList.add('spin');
+                syncNowBtn.disabled = true;
+            } else {
+                systemStatusDot.className = `status-dot ${status === 'Error' ? 'error' : 'idle'}`;
+                syncIcon.classList.remove('spin');
+                syncNowBtn.disabled = false;
+            }
+
+            // Stats
+            statTotal.textContent = data.repos.length;
+            statInterval.textContent = `${data.config.sync_interval_secs}s`;
+            statLastSync.textContent = data.last_sync_time ? new Date(data.last_sync_time).toLocaleString() : 'Never';
+
+            // Repositories List
+            allRepos = data.repos;
+            renderRepos(allRepos);
+
+            // Logs
+            renderLogs(data.logs);
+        }
+
+        // Filter repos on search input
+        repoSearch.addEventListener('input', () => {
+            renderRepos(allRepos);
+        });
+
+        // Config form submit
+        configForm.addEventListener('submit', async (e) => {
+            e.preventDefault();
+            isConfigSaving = true;
+            
+            const payload = {
+                github_username: usernameInput.value.trim(),
+                github_token: tokenInput.value.trim(),
+                local_path: localPathInput.value.trim(),
+                sync_interval_secs: parseInt(syncIntervalInput.value) || 3600,
+                web_port: parseInt(webPortInput.value) || 9090
+            };
+
+            try {
+                const res = await fetch('/api/config', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify(payload)
+                });
+                
+                if (res.ok) {
+                    const responseData = await res.json();
+                    if (responseData.message) {
+                        showToast(responseData.message, 'success');
+                    } else {
+                        showToast("Configuration saved successfully.");
+                    }
+                } else {
+                    showToast("Failed to save configuration.", "error");
+                }
+            } catch (err) {
+                console.error(err);
+                showToast("Network error while saving configuration.", "error");
+            } finally {
+                isConfigSaving = false;
+                fetchStatus();
+            }
+        });
+
+        // Sync Now button click
+        syncNowBtn.addEventListener('click', async () => {
+            try {
+                const res = await fetch('/api/sync', { method: 'POST' });
+                if (res.ok) {
+                    const data = await res.json();
+                    if (data.success) {
+                        showToast("Manual sync initiated.");
+                        syncIcon.classList.add('spin');
+                        syncNowBtn.disabled = true;
+                    } else {
+                        showToast(data.message || "Failed to trigger sync.", "error");
+                    }
+                } else {
+                    showToast("Failed to trigger sync.", "error");
+                }
+            } catch (err) {
+                console.error(err);
+                showToast("Network error when triggering sync.", "error");
+            } finally {
+                fetchStatus();
+            }
+        });
+
+        // Clear console
+        clearConsoleBtn.addEventListener('click', () => {
+            consoleLogs.innerHTML = '<div class="log-entry"><span class="log-text" style="color: var(--text-muted)">Console view cleared. Waiting for new logs...</span></div>';
+        });
+
+        // Auto Poll Status every 2 seconds
+        fetchStatus();
+        setInterval(fetchStatus, 2000);
+    </script>
+</body>
+</html>
