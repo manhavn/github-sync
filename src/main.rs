@@ -63,6 +63,10 @@ enum Commands {
         #[arg(long)]
         activate: bool,
 
+        /// Delete a sync profile by ID
+        #[arg(long)]
+        delete: Option<String>,
+
         /// Web UI server port (global setting, default: 9090)
         #[arg(long)]
         port: Option<u16>,
@@ -82,7 +86,11 @@ enum Commands {
     Status,
 
     /// Force immediate sync of the active repository profile
-    Sync,
+    Sync {
+        /// Sync mode ('full', 'missing', or 'updates')
+        #[arg(long, short = 'm', default_value = "full")]
+        mode: String,
+    },
 }
 
 #[tokio::main]
@@ -100,6 +108,7 @@ async fn main() {
             path,
             interval,
             activate,
+            delete,
             port,
         } => {
             let mut cfg = match Config::load() {
@@ -109,6 +118,27 @@ async fn main() {
                     std::process::exit(1);
                 }
             };
+
+            // Handle profile deletion
+            if let Some(del_id) = delete {
+                let exists = cfg.profiles.iter().any(|p| p.id == del_id);
+                if !exists {
+                    eprintln!("Profile '{}' does not exist.", del_id);
+                    std::process::exit(1);
+                }
+                
+                cfg.profiles.retain(|p| p.id != del_id);
+                if cfg.active_profile_id == del_id {
+                    cfg.active_profile_id = cfg.profiles.first().map(|p| p.id.clone()).unwrap_or_default();
+                }
+                
+                if let Err(e) = cfg.save() {
+                    eprintln!("Failed to save config: {}", e);
+                    std::process::exit(1);
+                }
+                println!("Profile '{}' deleted successfully.", del_id);
+                std::process::exit(0);
+            }
 
             let mut updated = false;
 
@@ -324,7 +354,7 @@ async fn main() {
             }
         }
 
-        Commands::Sync => {
+        Commands::Sync { mode } => {
             let config = match Config::load() {
                 Ok(c) => c,
                 Err(e) => {
@@ -338,11 +368,23 @@ async fn main() {
                 std::process::exit(1);
             }
 
+            let sync_mode = match mode.to_lowercase().as_str() {
+                "missing" => crate::state::SyncMode::MissingOnly,
+                "updates" => crate::state::SyncMode::UpdatesOnly,
+                _ => crate::state::SyncMode::Full,
+            };
+
+            let mode_param = match sync_mode {
+                crate::state::SyncMode::Full => "Full",
+                crate::state::SyncMode::MissingOnly => "MissingOnly",
+                crate::state::SyncMode::UpdatesOnly => "UpdatesOnly",
+            };
+
             match get_daemon_status() {
                 Ok((ref status, _)) if status == "Running" => {
-                    println!("Daemon is running. Triggering sync for active profile via API...");
+                    println!("Daemon is running. Triggering sync (Mode: {}) for active profile via API...", mode_param);
                     let client = reqwest::Client::new();
-                    let url = format!("http://{}:{}/api/sync", config.web_host, config.web_port);
+                    let url = format!("http://{}:{}/api/sync?mode={}", config.web_host, config.web_port, mode_param);
                     
                     let res = client.post(&url).send().await;
                     match res {
@@ -359,12 +401,18 @@ async fn main() {
                     }
                 }
                 _ => {
-                    println!("Daemon is not running. Performing foreground sync on active profile...");
+                    println!("Daemon is not running. Performing foreground sync (Mode: {}) on active profile...", mode_param);
                     
                     let state = Arc::new(RwLock::new(SyncState::new(config)));
                     let sync_trigger = Arc::new(Notify::new());
-                    let worker = SyncWorker::new(state, sync_trigger);
+                    let worker = SyncWorker::new(state.clone(), sync_trigger);
                     
+                    // Set the sync mode before running perform_sync
+                    {
+                        let mut s = state.write().await;
+                        s.next_sync_mode = sync_mode;
+                    }
+
                     if let Err(e) = worker.perform_sync().await {
                         eprintln!("Foreground sync failed: {}", e);
                         std::process::exit(1);
