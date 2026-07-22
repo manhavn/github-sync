@@ -796,6 +796,33 @@
     </div>
 
     <script>
+        // Authentication Helpers
+        function getAuthToken() {
+            return localStorage.getItem('gitsync_token') || '';
+        }
+
+        function setAuthToken(token) {
+            localStorage.setItem('gitsync_token', token);
+        }
+
+        async function authenticatedFetch(url, options = {}) {
+            options.headers = options.headers || {};
+            const token = getAuthToken();
+            if (token) {
+                options.headers['Authorization'] = `Bearer ${token}`;
+            }
+            if (options.body && !options.headers['Content-Type']) {
+                options.headers['Content-Type'] = 'application/json';
+            }
+
+            const res = await fetch(url, options);
+            if (res.status === 401) {
+                showLoginOverlay();
+                throw new Error("Unauthorized");
+            }
+            return res;
+        }
+
         // DOM Elements
         const configForm = document.getElementById('config-form');
         const configCardTitle = document.getElementById('config-card-title');
@@ -832,6 +859,21 @@
         
         const toast = document.getElementById('toast');
         const toastMessage = document.getElementById('toast-message');
+
+        const loginOverlay = document.getElementById('login-overlay');
+        const loginTokenInput = document.getElementById('login-token-input');
+        const loginTokenToggle = document.getElementById('login-token-toggle');
+        const loginSubmitBtn = document.getElementById('login-submit-btn');
+        const loginErrorMsg = document.getElementById('login-error-msg');
+
+        function showLoginOverlay() {
+            loginOverlay.style.display = 'flex';
+            loginErrorMsg.style.display = 'none';
+        }
+
+        function hideLoginOverlay() {
+            loginOverlay.style.display = 'none';
+        }
 
         // State vars
         let allRepos = [];
@@ -875,14 +917,16 @@
         // Fetch Dashboard Status
         async function fetchStatus() {
             try {
-                const res = await fetch('/api/status');
+                const res = await authenticatedFetch('/api/status');
                 if (!res.ok) throw new Error("HTTP error " + res.status);
                 const data = await res.json();
                 updateUI(data);
             } catch (err) {
                 console.error("Error fetching status:", err);
-                systemStatusDot.className = "status-dot error";
-                systemStatusText.textContent = "Offline / Connection Lost";
+                if (err.message !== "Unauthorized") {
+                    systemStatusDot.className = "status-dot error";
+                    systemStatusText.textContent = "Offline / Connection Lost";
+                }
             }
         }
 
@@ -922,9 +966,8 @@
             if (id === activeProfileId) return; // Already active
             
             try {
-                const res = await fetch('/api/select_profile', {
+                const res = await authenticatedFetch('/api/select_profile', {
                     method: 'POST',
-                    headers: { 'Content-Type': 'application/json' },
                     body: JSON.stringify({ id })
                 });
                 if (res.ok) {
@@ -967,7 +1010,7 @@
             }
 
             try {
-                const res = await fetch(`/api/profiles/${id}`, { method: 'DELETE' });
+                const res = await authenticatedFetch(`/api/profiles/${id}`, { method: 'DELETE' });
                 if (res.ok) {
                     showToast("Profile deleted.");
                     if (currentEditingProfileId === id) {
@@ -1193,9 +1236,8 @@
             };
 
             try {
-                const res = await fetch('/api/profiles', {
+                const res = await authenticatedFetch('/api/profiles', {
                     method: 'POST',
-                    headers: { 'Content-Type': 'application/json' },
                     body: JSON.stringify(payload)
                 });
                 
@@ -1228,7 +1270,7 @@
             }
 
             try {
-                const res = await fetch(`/api/sync?mode=${mode}`, { method: 'POST' });
+                const res = await authenticatedFetch(`/api/sync?mode=${mode}`, { method: 'POST' });
                 if (res.ok) {
                     const data = await res.json();
                     if (data.success) {
@@ -1259,9 +1301,8 @@
         autoSyncCheckbox.addEventListener('change', async () => {
             const enabled = autoSyncCheckbox.checked;
             try {
-                const res = await fetch('/api/toggle_auto_sync', {
+                const res = await authenticatedFetch('/api/toggle_auto_sync', {
                     method: 'POST',
-                    headers: { 'Content-Type': 'application/json' },
                     body: JSON.stringify({ enabled })
                 });
                 if (res.ok) {
@@ -1283,9 +1324,90 @@
             consoleLogs.innerHTML = '<div class="log-entry"><span class="log-text" style="color: var(--text-muted)">Console view cleared. Waiting for new logs...</span></div>';
         });
 
+        // Toggle Login Token Visibility
+        loginTokenToggle.addEventListener('click', () => {
+            if (loginTokenInput.type === 'password') {
+                loginTokenInput.type = 'text';
+                loginTokenToggle.textContent = 'Hide';
+            } else {
+                loginTokenInput.type = 'password';
+                loginTokenToggle.textContent = 'Show';
+            }
+        });
+
+        // Submit Token
+        loginSubmitBtn.addEventListener('click', async () => {
+            const token = loginTokenInput.value.trim();
+            if (!token) return;
+            
+            setAuthToken(token);
+            loginSubmitBtn.disabled = true;
+            loginSubmitBtn.querySelector('span').textContent = 'Authenticating...';
+            
+            try {
+                const res = await fetch('/api/status', {
+                    headers: { 'Authorization': `Bearer ${token}` }
+                });
+                
+                if (res.status === 200) {
+                    const data = await res.json();
+                    hideLoginOverlay();
+                    updateUI(data);
+                    showToast('Successfully logged in!', 'success');
+                } else {
+                    localStorage.removeItem('gitsync_token');
+                    loginErrorMsg.style.display = 'block';
+                }
+            } catch (err) {
+                console.error("Login verification failed:", err);
+                loginErrorMsg.style.display = 'block';
+            } finally {
+                loginSubmitBtn.disabled = false;
+                loginSubmitBtn.querySelector('span').textContent = 'Sign In';
+            }
+        });
+
+        // Enter key submits token
+        loginTokenInput.addEventListener('keypress', (e) => {
+            if (e.key === 'Enter') {
+                loginSubmitBtn.click();
+            }
+        });
+
         // Auto Poll Status every 2 seconds
         fetchStatus();
         setInterval(fetchStatus, 2000);
     </script>
+
+    <!-- Login Overlay -->
+    <div id="login-overlay" class="glass" style="display: none; position: fixed; inset: 0; background: rgba(8, 12, 20, 0.95); z-index: 10000; align-items: center; justify-content: center; backdrop-filter: blur(15px); -webkit-backdrop-filter: blur(15px);">
+        <div class="glass" style="width: 100%; max-width: 420px; padding: 2.5rem; display: flex; flex-direction: column; gap: 1.5rem; border: 1px solid var(--panel-border); box-shadow: 0 20px 50px rgba(0, 0, 0, 0.5);">
+            <div style="text-align: center; display: flex; flex-direction: column; gap: 0.5rem;">
+                <div class="logo-icon" style="width: 48px; height: 48px; margin: 0 auto; font-size: 1.5rem; background: linear-gradient(135deg, var(--primary), #a855f7); border-radius: 10px; display: flex; align-items: center; justify-content: center; font-weight: 700; box-shadow: 0 0 15px var(--primary-glow);">GS</div>
+                <h2 style="font-size: 1.5rem; font-weight: 700; margin-top: 0.5rem; letter-spacing: -0.025em;">GitSync Web Access</h2>
+                <p style="font-size: 0.85rem; color: var(--text-muted);">Please enter your access token to log in</p>
+            </div>
+            
+            <div style="display: flex; flex-direction: column; gap: 0.5rem;">
+                <label for="login-token-input" style="font-size: 0.8rem; font-weight: 600; color: var(--text-muted);">Web Access Token</label>
+                <div style="position: relative; display: flex; align-items: center;">
+                    <input type="password" id="login-token-input" placeholder="gitsync_..." style="width: 100%; padding: 0.75rem 1rem; background: rgba(255, 255, 255, 0.03); border: 1px solid var(--panel-border); border-radius: 8px; color: var(--text-main); font-family: 'JetBrains Mono', monospace; font-size: 0.9rem; outline: none; transition: border-color var(--transition-speed);" onfocus="this.style.borderColor='var(--primary)'" onblur="this.style.borderColor='var(--panel-border)'">
+                    <button type="button" id="login-token-toggle" style="position: absolute; right: 10px; background: none; border: none; color: var(--text-muted); cursor: pointer; font-size: 0.75rem; font-weight: 600; text-transform: uppercase;">Show</button>
+                </div>
+                <div id="login-error-msg" style="color: var(--danger); font-size: 0.8rem; display: none; margin-top: 0.25rem;">
+                    Invalid token. Please try again.
+                </div>
+            </div>
+            
+            <button id="login-submit-btn" class="btn" style="width: 100%; padding: 0.85rem; display: flex; justify-content: center; align-items: center; gap: 0.5rem; font-weight: 600; font-size: 0.95rem; background: linear-gradient(135deg, var(--primary), #a855f7); color: white; border: none; border-radius: 8px; cursor: pointer; box-shadow: 0 4px 15px var(--primary-glow); transition: opacity var(--transition-speed);" onmouseover="this.style.opacity='0.9'" onmouseout="this.style.opacity='1'">
+                <span>Sign In</span>
+            </button>
+            
+            <div style="font-size: 0.75rem; color: var(--text-muted); text-align: center; line-height: 1.4;">
+                To generate or view access tokens, run:<br>
+                <code style="font-family: 'JetBrains Mono', monospace; color: var(--text-main); background: rgba(255, 255, 255, 0.05); padding: 2px 4px; border-radius: 4px; display: inline-block; margin-top: 4px;">gitsync token show default</code>
+            </div>
+        </div>
+    </div>
 </body>
 </html>

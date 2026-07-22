@@ -91,10 +91,50 @@ enum Commands {
         #[arg(long, short = 'm', default_value = "full")]
         mode: String,
     },
+
+    /// Manage Web UI access tokens
+    Token {
+        #[command(subcommand)]
+        action: TokenCommands,
+    },
 }
 
-#[tokio::main]
-async fn main() {
+#[derive(Subcommand)]
+enum TokenCommands {
+    /// Create a new web access token
+    Create {
+        /// Name of the token (e.g. user name or device name)
+        name: String,
+        /// Custom token value (optional, a secure random one will be generated if not specified)
+        #[arg(long)]
+        token: Option<String>,
+    },
+    /// List all web access tokens
+    List,
+    /// Delete a web access token
+    Delete {
+        /// Name of the token to delete
+        name: String,
+    },
+    /// Show the actual token value for copying
+    Show {
+        /// Name of the token to display
+        name: String,
+    },
+}
+
+fn generate_random_token() -> String {
+    use rand::Rng;
+    let mut rng = rand::thread_rng();
+    let token_bytes: Vec<u8> = (0..16).map(|_| rng.gen::<u8>()).collect();
+    let mut token_str = String::new();
+    for byte in token_bytes {
+        token_str.push_str(&format!("{:02x}", byte));
+    }
+    format!("gitsync_{}", token_str)
+}
+
+fn main() {
     let cli = Cli::parse();
 
     match cli.command {
@@ -262,13 +302,31 @@ async fn main() {
                 _ => {}
             }
 
-            let config = match Config::load() {
+            let mut config = match Config::load() {
                 Ok(c) => c,
                 Err(e) => {
                     eprintln!("Failed to load configuration: {}. Please configure at least one profile first.", e);
                     std::process::exit(1);
                 }
             };
+
+            if config.web_tokens.is_empty() {
+                let default_token = generate_random_token();
+                config.web_tokens.push(config::WebToken {
+                    name: "default".to_string(),
+                    token: default_token.clone(),
+                    created_at: chrono::Utc::now().to_rfc3339(),
+                });
+                if let Err(e) = config.save() {
+                    eprintln!("Warning: Failed to save config with default token: {}", e);
+                }
+                println!("------------------------------------------------------------");
+                println!("No web access tokens found. Generated a default token:");
+                println!("  Name:  default");
+                println!("  Token: {}", default_token);
+                println!("Use this token to log in to the Web UI.");
+                println!("------------------------------------------------------------");
+            }
 
             if background {
                 println!("Starting GitSync daemon in background...");
@@ -282,25 +340,32 @@ async fn main() {
                 println!("Press Ctrl+C to terminate.");
             }
 
-            let web_host = config.web_host.clone();
-            let web_port = config.web_port;
-            
-            let state = Arc::new(RwLock::new(SyncState::new(config)));
-            let sync_trigger = Arc::new(Notify::new());
+            let rt = tokio::runtime::Builder::new_multi_thread()
+                .enable_all()
+                .build()
+                .unwrap();
 
-            let state_clone = Arc::clone(&state);
-            let trigger_clone = Arc::clone(&sync_trigger);
-            
-            tokio::spawn(async move {
-                let worker = SyncWorker::new(state_clone, trigger_clone);
-                worker.run_loop().await;
+            rt.block_on(async move {
+                let web_host = config.web_host.clone();
+                let web_port = config.web_port;
+                
+                let state = Arc::new(RwLock::new(SyncState::new(config)));
+                let sync_trigger = Arc::new(Notify::new());
+
+                let state_clone = Arc::clone(&state);
+                let trigger_clone = Arc::clone(&sync_trigger);
+                
+                tokio::spawn(async move {
+                    let worker = SyncWorker::new(state_clone, trigger_clone);
+                    worker.run_loop().await;
+                });
+
+                println!("Starting Web UI server at http://{}:{}", web_host, web_port);
+                if let Err(e) = start_web_server(state, sync_trigger, web_host, web_port).await {
+                    eprintln!("Web server error: {}", e);
+                    std::process::exit(1);
+                }
             });
-
-            println!("Starting Web UI server at http://{}:{}", web_host, web_port);
-            if let Err(e) = start_web_server(state, sync_trigger, web_host, web_port).await {
-                eprintln!("Web server error: {}", e);
-                std::process::exit(1);
-            }
         }
 
         Commands::Stop => {
@@ -355,7 +420,82 @@ async fn main() {
         }
 
         Commands::Sync { mode } => {
-            let config = match Config::load() {
+            let rt = tokio::runtime::Builder::new_multi_thread()
+                .enable_all()
+                .build()
+                .unwrap();
+
+            rt.block_on(async {
+                let config = match Config::load() {
+                    Ok(c) => c,
+                    Err(e) => {
+                        eprintln!("Failed to load configuration: {}", e);
+                        std::process::exit(1);
+                    }
+                };
+
+                if config.active_profile_id.is_empty() {
+                    eprintln!("No active profile is configured. Cannot sync.");
+                    std::process::exit(1);
+                }
+
+                let sync_mode = match mode.to_lowercase().as_str() {
+                    "missing" => crate::state::SyncMode::MissingOnly,
+                    "updates" => crate::state::SyncMode::UpdatesOnly,
+                    _ => crate::state::SyncMode::Full,
+                };
+
+                let mode_param = match sync_mode {
+                    crate::state::SyncMode::Full => "Full",
+                    crate::state::SyncMode::MissingOnly => "MissingOnly",
+                    crate::state::SyncMode::UpdatesOnly => "UpdatesOnly",
+                };
+
+                match get_daemon_status() {
+                    Ok((ref status, _)) if status == "Running" => {
+                        println!("Daemon is running. Triggering sync (Mode: {}) for active profile via API...", mode_param);
+                        let client = reqwest::Client::new();
+                        let url = format!("http://{}:{}/api/sync?mode={}", config.web_host, config.web_port, mode_param);
+                        
+                        let res = client.post(&url).send().await;
+                        match res {
+                            Ok(response) => {
+                                if response.status().is_success() {
+                                    println!("Successfully triggered synchronization for active profile in background daemon.");
+                                } else {
+                                    eprintln!("Daemon returned error status: {}", response.status());
+                                }
+                            }
+                            Err(e) => {
+                                eprintln!("Failed to connect to daemon API: {}. Is it binding to a different port?", e);
+                            }
+                        }
+                    }
+                    _ => {
+                        println!("Daemon is not running. Performing foreground sync (Mode: {}) on active profile...", mode_param);
+                        
+                        let state = Arc::new(RwLock::new(SyncState::new(config)));
+                        let sync_trigger = Arc::new(Notify::new());
+                        let worker = SyncWorker::new(state.clone(), sync_trigger);
+                        
+                        // Set the sync mode before running perform_sync
+                        {
+                            let mut s = state.write().await;
+                            s.next_sync_mode = sync_mode;
+                        }
+
+                        if let Err(e) = worker.perform_sync().await {
+                            eprintln!("Foreground sync failed: {}", e);
+                            std::process::exit(1);
+                        }
+                        println!("Foreground sync finished successfully.");
+                    }
+                }
+            });
+        }
+
+        Commands::Token { action } => {
+            let mut config = match Config::load() {
                 Ok(c) => c,
                 Err(e) => {
                     eprintln!("Failed to load configuration: {}", e);
@@ -363,61 +503,64 @@ async fn main() {
                 }
             };
 
-            if config.active_profile_id.is_empty() {
-                eprintln!("No active profile is configured. Cannot sync.");
-                std::process::exit(1);
-            }
-
-            let sync_mode = match mode.to_lowercase().as_str() {
-                "missing" => crate::state::SyncMode::MissingOnly,
-                "updates" => crate::state::SyncMode::UpdatesOnly,
-                _ => crate::state::SyncMode::Full,
-            };
-
-            let mode_param = match sync_mode {
-                crate::state::SyncMode::Full => "Full",
-                crate::state::SyncMode::MissingOnly => "MissingOnly",
-                crate::state::SyncMode::UpdatesOnly => "UpdatesOnly",
-            };
-
-            match get_daemon_status() {
-                Ok((ref status, _)) if status == "Running" => {
-                    println!("Daemon is running. Triggering sync (Mode: {}) for active profile via API...", mode_param);
-                    let client = reqwest::Client::new();
-                    let url = format!("http://{}:{}/api/sync?mode={}", config.web_host, config.web_port, mode_param);
+            match action {
+                TokenCommands::Create { name, token } => {
+                    if config.web_tokens.iter().any(|t| t.name == name) {
+                        eprintln!("Error: Token with name '{}' already exists.", name);
+                        std::process::exit(1);
+                    }
                     
-                    let res = client.post(&url).send().await;
-                    match res {
-                        Ok(response) => {
-                            if response.status().is_success() {
-                                println!("Successfully triggered synchronization for active profile in background daemon.");
-                            } else {
-                                eprintln!("Daemon returned error status: {}", response.status());
-                            }
-                        }
-                        Err(e) => {
-                            eprintln!("Failed to connect to daemon API: {}. Is it binding to a different port?", e);
+                    let token_value = token.unwrap_or_else(generate_random_token);
+                    
+                    config.web_tokens.push(config::WebToken {
+                        name: name.clone(),
+                        token: token_value.clone(),
+                        created_at: chrono::Utc::now().to_rfc3339(),
+                    });
+                    
+                    if let Err(e) = config.save() {
+                        eprintln!("Failed to save config: {}", e);
+                        std::process::exit(1);
+                    }
+                    
+                    println!("Token '{}' created successfully.", name);
+                    println!("Value: {}", token_value);
+                }
+                TokenCommands::List => {
+                    println!("Web Access Tokens:");
+                    if config.web_tokens.is_empty() {
+                        println!("  <no tokens configured>");
+                    } else {
+                        for t in &config.web_tokens {
+                            println!("  - Name:       {}", t.name);
+                            println!("    Created At: {}", t.created_at);
+                            println!("    Value:      ******** (use 'gitsync token show {}' to view)", t.name);
+                            println!();
                         }
                     }
                 }
-                _ => {
-                    println!("Daemon is not running. Performing foreground sync (Mode: {}) on active profile...", mode_param);
-                    
-                    let state = Arc::new(RwLock::new(SyncState::new(config)));
-                    let sync_trigger = Arc::new(Notify::new());
-                    let worker = SyncWorker::new(state.clone(), sync_trigger);
-                    
-                    // Set the sync mode before running perform_sync
-                    {
-                        let mut s = state.write().await;
-                        s.next_sync_mode = sync_mode;
-                    }
-
-                    if let Err(e) = worker.perform_sync().await {
-                        eprintln!("Foreground sync failed: {}", e);
+                TokenCommands::Delete { name } => {
+                    let before_len = config.web_tokens.len();
+                    config.web_tokens.retain(|t| t.name != name);
+                    if config.web_tokens.len() == before_len {
+                        eprintln!("Error: Token with name '{}' not found.", name);
                         std::process::exit(1);
                     }
-                    println!("Foreground sync finished successfully.");
+                    
+                    if let Err(e) = config.save() {
+                        eprintln!("Failed to save config: {}", e);
+                        std::process::exit(1);
+                    }
+                    
+                    println!("Token '{}' deleted successfully.", name);
+                }
+                TokenCommands::Show { name } => {
+                    if let Some(t) = config.web_tokens.iter().find(|t| t.name == name) {
+                        println!("{}", t.token);
+                    } else {
+                        eprintln!("Error: Token with name '{}' not found.", name);
+                        std::process::exit(1);
+                    }
                 }
             }
         }

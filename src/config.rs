@@ -15,6 +15,13 @@ pub struct SyncProfile {
 }
 
 #[derive(Serialize, Deserialize, Clone, Debug)]
+pub struct WebToken {
+    pub name: String,
+    pub token: String,
+    pub created_at: String,
+}
+
+#[derive(Serialize, Deserialize, Clone, Debug)]
 pub struct Config {
     #[serde(default)]
     pub profiles: Vec<SyncProfile>,
@@ -24,6 +31,8 @@ pub struct Config {
     pub web_host: String,
     #[serde(default = "default_web_port")]
     pub web_port: u16,
+    #[serde(default)]
+    pub web_tokens: Vec<WebToken>,
 }
 
 fn default_web_host() -> String {
@@ -41,6 +50,7 @@ impl Default for Config {
             active_profile_id: String::new(),
             web_host: default_web_host(),
             web_port: default_web_port(),
+            web_tokens: Vec::new(),
         }
     }
 }
@@ -106,6 +116,7 @@ impl Config {
                 active_profile_id: "default-github".to_string(),
                 web_host,
                 web_port,
+                web_tokens: Vec::new(),
             };
             
             let _ = migrated.save();

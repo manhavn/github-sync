@@ -1,6 +1,10 @@
 use axum::{
     routing::{get, post, delete},
     Json, Router,
+    extract::Request,
+    middleware::{self, Next},
+    response::Response,
+    http::{StatusCode, header},
 };
 use std::sync::Arc;
 use tokio::sync::{RwLock, Notify};
@@ -9,20 +13,47 @@ use crate::config::SyncProfile;
 
 const HTML_CONTENT: &str = include_str!("web_ui.html");
 
+async fn auth_middleware(
+    request: Request,
+    next: Next,
+) -> Result<Response, StatusCode> {
+    let auth_header = request
+        .headers()
+        .get(header::AUTHORIZATION)
+        .and_then(|value| value.to_str().ok());
+
+    let token = match auth_header {
+        Some(auth) if auth.starts_with("Bearer ") => &auth[7..],
+        _ => return Err(StatusCode::UNAUTHORIZED),
+    };
+
+    if let Ok(config) = crate::config::Config::load() {
+        if config.web_tokens.iter().any(|t| t.token == token) {
+            return Ok(next.run(request).await);
+        }
+    }
+
+    Err(StatusCode::UNAUTHORIZED)
+}
+
 pub async fn start_web_server(
     state: Arc<RwLock<SyncState>>,
     trigger: Arc<Notify>,
     host: String,
     port: u16,
 ) -> Result<(), String> {
+    let api_routes = Router::new()
+        .route("/status", get(get_status))
+        .route("/profiles", post(add_or_update_profile))
+        .route("/profiles/:id", delete(delete_profile))
+        .route("/select_profile", post(select_profile))
+        .route("/toggle_auto_sync", post(toggle_auto_sync))
+        .route("/sync", post(trigger_sync))
+        .layer(middleware::from_fn(auth_middleware));
+
     let app = Router::new()
         .route("/", get(serve_ui))
-        .route("/api/status", get(get_status))
-        .route("/api/profiles", post(add_or_update_profile))
-        .route("/api/profiles/:id", delete(delete_profile))
-        .route("/api/select_profile", post(select_profile))
-        .route("/api/toggle_auto_sync", post(toggle_auto_sync))
-        .route("/api/sync", post(trigger_sync))
+        .nest("/api", api_routes)
         .layer(axum::Extension(state))
         .layer(axum::Extension(trigger));
 
