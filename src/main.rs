@@ -263,7 +263,6 @@ async fn main() {
             
             tokio::spawn(async move {
                 let worker = SyncWorker::new(state_clone, trigger_clone);
-                let _ = worker.perform_sync().await;
                 worker.run_loop().await;
             });
 

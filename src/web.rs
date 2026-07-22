@@ -21,6 +21,7 @@ pub async fn start_web_server(
         .route("/api/profiles", post(add_or_update_profile))
         .route("/api/profiles/:id", delete(delete_profile))
         .route("/api/select_profile", post(select_profile))
+        .route("/api/toggle_auto_sync", post(toggle_auto_sync))
         .route("/api/sync", post(trigger_sync))
         .layer(axum::Extension(state))
         .layer(axum::Extension(trigger));
@@ -64,6 +65,7 @@ async fn get_status(
         "last_sync_time": active_state.last_sync_time,
         "repos": active_state.repos,
         "logs": active_state.logs,
+        "auto_sync": active_state.auto_sync,
         "web_host": s.web_host,
         "web_port": s.web_port,
     });
@@ -185,7 +187,7 @@ struct SelectProfilePayload {
 
 async fn select_profile(
     axum::Extension(state): axum::Extension<Arc<RwLock<SyncState>>>,
-    axum::Extension(trigger): axum::Extension<Arc<Notify>>,
+    axum::Extension(_trigger): axum::Extension<Arc<Notify>>,
     Json(payload): Json<SelectProfilePayload>,
 ) -> Result<Json<serde_json::Value>, axum::http::StatusCode> {
     let mut s = state.write().await;
@@ -196,14 +198,14 @@ async fn select_profile(
     }
 
     config.active_profile_id = payload.id.clone();
-    s.active_profile_id = payload.id;
+    s.active_profile_id = payload.id.clone();
 
     config.save().map_err(|_| axum::http::StatusCode::INTERNAL_SERVER_ERROR)?;
 
-    s.add_log_to_active("INFO", "Switched active profile via Web UI.");
+    let p_state = s.profile_states.entry(payload.id).or_insert_with(ProfileSyncState::new);
+    p_state.auto_sync = false; // Disable auto sync by default when switching profiles!
     
-    // Trigger sync cycle on switch
-    trigger.notify_one();
+    s.add_log_to_active("INFO", "Switched active profile via Web UI. Auto Sync is disabled by default.");
 
     let mut response = serde_json::Map::new();
     response.insert("success".to_string(), serde_json::Value::Bool(true));
@@ -243,6 +245,32 @@ async fn trigger_sync(
     s.add_log_to_active("INFO", &format!("Manual sync requested via Web API. Mode: {:?}", mode));
     trigger.notify_one();
 
+    let mut response = serde_json::Map::new();
+    response.insert("success".to_string(), serde_json::Value::Bool(true));
+    Json(serde_json::Value::Object(response))
+}
+
+#[derive(serde::Deserialize)]
+struct ToggleAutoSyncPayload {
+    enabled: bool,
+}
+
+async fn toggle_auto_sync(
+    axum::Extension(state): axum::Extension<Arc<RwLock<SyncState>>>,
+    axum::Extension(trigger): axum::Extension<Arc<Notify>>,
+    Json(payload): Json<ToggleAutoSyncPayload>,
+) -> Json<serde_json::Value> {
+    let mut s = state.write().await;
+    let active_id = s.active_profile_id.clone();
+    if !active_id.is_empty() {
+        let p_state = s.profile_states.entry(active_id).or_insert_with(ProfileSyncState::new);
+        p_state.auto_sync = payload.enabled;
+        p_state.add_log("INFO", &format!("Auto Sync toggled to: {}", payload.enabled));
+        if payload.enabled {
+            // Trigger immediate sync cycle when auto sync is enabled
+            trigger.notify_one();
+        }
+    }
     let mut response = serde_json::Map::new();
     response.insert("success".to_string(), serde_json::Value::Bool(true));
     Json(serde_json::Value::Object(response))

@@ -26,6 +26,7 @@ pub struct ProfileSyncState {
     pub last_sync_time: Option<DateTime<Utc>>,
     pub repos: Vec<RepoStatus>,
     pub logs: VecDeque<LogMessage>,
+    pub auto_sync: bool,
 }
 
 impl ProfileSyncState {
@@ -35,6 +36,7 @@ impl ProfileSyncState {
             last_sync_time: None,
             repos: Vec::new(),
             logs: VecDeque::with_capacity(100),
+            auto_sync: false,
         }
     }
 

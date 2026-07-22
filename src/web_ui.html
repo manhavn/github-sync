@@ -553,13 +553,66 @@
             }
         }
 
-        .spin {
-            animation: spin 1s linear infinite;
+        /* Switch Toggle */
+        .switch {
+          position: relative;
+          display: inline-block;
+          width: 44px;
+          height: 24px;
         }
 
-        @keyframes spin {
-            from { transform: rotate(0deg); }
-            to { transform: rotate(360deg); }
+        .switch input { 
+          opacity: 0;
+          width: 0;
+          height: 0;
+        }
+
+        .slider {
+          position: absolute;
+          cursor: pointer;
+          top: 0;
+          left: 0;
+          right: 0;
+          bottom: 0;
+          background-color: rgba(255, 255, 255, 0.1);
+          transition: .3s;
+          border: 1px solid rgba(255, 255, 255, 0.05);
+        }
+
+        .slider:before {
+          position: absolute;
+          content: "";
+          height: 16px;
+          width: 16px;
+          left: 3px;
+          bottom: 3px;
+          background-color: var(--text-muted);
+          transition: .3s;
+        }
+
+        input:checked + .slider {
+          background-color: var(--success-glow);
+          border-color: var(--success);
+        }
+        
+        input:checked + .slider:before {
+          background-color: var(--success);
+        }
+
+        input:focus + .slider {
+          box-shadow: 0 0 1px var(--success-glow);
+        }
+
+        input:checked + .slider:before {
+          transform: translateX(20px);
+        }
+
+        .slider.round {
+          border-radius: 24px;
+        }
+
+        .slider.round:before {
+          border-radius: 50%;
         }
     </style>
 </head>
@@ -641,6 +694,16 @@
             <!-- Actions Card -->
             <div class="card glass">
                 <div class="card-title">Actions</div>
+                
+                <!-- Auto Sync Toggle Switch -->
+                <div style="display: flex; justify-content: space-between; align-items: center; background: rgba(255, 255, 255, 0.02); border: 1px solid rgba(255, 255, 255, 0.05); padding: 0.65rem 0.85rem; border-radius: 8px; margin-bottom: 0.5rem;">
+                    <span style="font-size: 0.85rem; font-weight: 600;">Auto Sync (Interval)</span>
+                    <label class="switch">
+                        <input type="checkbox" id="auto-sync-checkbox">
+                        <span class="slider round"></span>
+                    </label>
+                </div>
+
                 <div style="display: flex; flex-direction: column; gap: 0.75rem;">
                     <button id="sync-full-btn" class="btn btn-sync" style="width: 100%;">
                         <svg class="sync-icon" style="width: 16px; height: 16px; fill: currentColor;" viewBox="0 0 24 24">
@@ -752,6 +815,7 @@
         const syncMissingBtn = document.getElementById('sync-missing-btn');
         const syncUpdatesBtn = document.getElementById('sync-updates-btn');
         const syncIcons = document.querySelectorAll('.sync-icon');
+        const autoSyncCheckbox = document.getElementById('auto-sync-checkbox');
         
         const systemStatusDot = document.getElementById('system-status-dot');
         const systemStatusText = document.getElementById('system-status-text');
@@ -1072,6 +1136,10 @@
                 syncUpdatesBtn.disabled = !activeProfileId;
             }
 
+            // 3b. Update Auto Sync Checkbox
+            autoSyncCheckbox.checked = data.auto_sync || false;
+            autoSyncCheckbox.disabled = !activeProfileId;
+
             // 4. Stats
             statTotal.textContent = data.repos ? data.repos.length : 0;
             statInterval.textContent = activeProfile ? `${activeProfile.sync_interval_secs}s` : '0s';
@@ -1169,6 +1237,29 @@
         syncFullBtn.addEventListener('click', () => runSync('Full'));
         syncMissingBtn.addEventListener('click', () => runSync('MissingOnly'));
         syncUpdatesBtn.addEventListener('click', () => runSync('UpdatesOnly'));
+
+        // Toggle Auto Sync Listener
+        autoSyncCheckbox.addEventListener('change', async () => {
+            const enabled = autoSyncCheckbox.checked;
+            try {
+                const res = await fetch('/api/toggle_auto_sync', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ enabled })
+                });
+                if (res.ok) {
+                    showToast(enabled ? "Auto Sync enabled." : "Auto Sync disabled.");
+                } else {
+                    showToast("Failed to toggle auto sync.", "error");
+                    autoSyncCheckbox.checked = !enabled; // revert
+                }
+            } catch (err) {
+                console.error(err);
+                showToast("Network error toggling auto sync.", "error");
+                autoSyncCheckbox.checked = !enabled; // revert
+            }
+            fetchStatus();
+        });
 
         // Clear console
         clearConsoleBtn.addEventListener('click', () => {

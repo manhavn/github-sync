@@ -36,22 +36,37 @@ impl SyncWorker {
             };
 
             // Wait for interval or trigger
+            let mut is_manual = false;
             tokio::select! {
                 _ = tokio::time::sleep(tokio::time::Duration::from_secs(interval_secs)) => {
                     // Normal timeout sync
                 }
                 _ = self.trigger.notified() => {
-                    // Triggered sync (manual or config update)
+                    is_manual = true;
                 }
             }
 
-            if let Err(e) = self.perform_sync().await {
-                let mut s = self.state.write().await;
+            let should_sync = if is_manual {
+                true
+            } else {
+                let s = self.state.read().await;
                 let active_id = s.active_profile_id.clone();
-                if !active_id.is_empty() {
-                    let p_state = s.profile_states.entry(active_id).or_insert_with(ProfileSyncState::new);
-                    p_state.status = "Error".to_string();
-                    p_state.add_log("ERROR", &format!("Sync failed: {}", e));
+                if active_id.is_empty() {
+                    false
+                } else {
+                    s.profile_states.get(&active_id).map(|st| st.auto_sync).unwrap_or(false)
+                }
+            };
+
+            if should_sync {
+                if let Err(e) = self.perform_sync().await {
+                    let mut s = self.state.write().await;
+                    let active_id = s.active_profile_id.clone();
+                    if !active_id.is_empty() {
+                        let p_state = s.profile_states.entry(active_id).or_insert_with(ProfileSyncState::new);
+                        p_state.status = "Error".to_string();
+                        p_state.add_log("ERROR", &format!("Sync failed: {}", e));
+                    }
                 }
             }
         }
