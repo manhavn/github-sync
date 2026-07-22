@@ -176,6 +176,54 @@
             margin-bottom: 0.25rem;
         }
 
+        /* Profile items styles */
+        .profile-item {
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+            padding: 0.65rem 0.85rem;
+            border-radius: 8px;
+            background: rgba(255, 255, 255, 0.02);
+            border: 1px solid rgba(255, 255, 255, 0.04);
+            cursor: pointer;
+            transition: all var(--transition-speed);
+        }
+
+        .profile-item:hover {
+            background: rgba(255, 255, 255, 0.05);
+            border-color: rgba(255, 255, 255, 0.1);
+        }
+
+        .profile-item.active {
+            background: rgba(99, 102, 241, 0.12);
+            border-color: var(--primary);
+            box-shadow: 0 0 10px rgba(99, 102, 241, 0.15);
+        }
+
+        .profile-name {
+            font-size: 0.85rem;
+            font-weight: 600;
+        }
+
+        .profile-meta {
+            font-size: 0.7rem;
+            color: var(--text-muted);
+        }
+
+        .profile-action-btn {
+            background: none;
+            border: none;
+            cursor: pointer;
+            padding: 0.25rem;
+            font-size: 0.8rem;
+            border-radius: 4px;
+            transition: background var(--transition-speed);
+        }
+
+        .profile-action-btn:hover {
+            background: rgba(255, 255, 255, 0.08);
+        }
+
         /* Form Controls */
         .form-group {
             display: flex;
@@ -189,7 +237,7 @@
             color: var(--text-muted);
         }
 
-        input {
+        input, select {
             width: 100%;
             background: rgba(15, 23, 42, 0.8);
             border: 1px solid rgba(255, 255, 255, 0.08);
@@ -199,10 +247,10 @@
             font-family: inherit;
             font-size: 0.9rem;
             transition: all var(--transition-speed);
+            outline: none;
         }
 
-        input:focus {
-            outline: none;
+        input:focus, select:focus {
             border-color: var(--primary);
             box-shadow: 0 0 0 3px var(--primary-glow);
         }
@@ -521,7 +569,7 @@
             <div class="logo-icon">GS</div>
             <div class="logo-text">
                 <h1>GitSync Daemon</h1>
-                <p>GitHub Repository Local Sync & Mirror Service</p>
+                <p>Repository Local Mirror & Synchronization Dashboard</p>
             </div>
         </div>
         <div class="status-badge" id="system-status-container">
@@ -531,35 +579,58 @@
     </header>
 
     <div class="dashboard-grid">
-        <!-- Configuration and Trigger Sidebar -->
+        <!-- Sidebar -->
         <div class="sidebar">
+            <!-- Profiles List -->
             <div class="card glass">
                 <div class="card-title">
-                    Configuration
+                    <span>Sync Profiles</span>
+                    <button id="add-profile-btn" class="btn" style="padding: 0.35rem 0.6rem; font-size: 0.75rem; background: var(--primary);">+ Add New</button>
+                </div>
+                <div id="profiles-list" style="display: flex; flex-direction: column; gap: 0.5rem; max-height: 220px; overflow-y: auto; padding-right: 0.25rem;">
+                    <!-- Profiles list rendered dynamically -->
+                </div>
+            </div>
+
+            <!-- Configuration Card -->
+            <div class="card glass">
+                <div class="card-title" id="config-card-title">
+                    Configure Profile
                 </div>
                 <form id="config-form">
                     <div class="form-group" style="margin-bottom: 1rem;">
-                        <label for="username">GitHub Username</label>
-                        <input type="text" id="username" required placeholder="e.g. octocat">
+                        <label for="profile-name">Profile Display Name</label>
+                        <input type="text" id="profile-name" required placeholder="e.g. My GitHub or GitLab VPS">
+                    </div>
+                    <div class="form-group" style="margin-bottom: 1rem;">
+                        <label for="provider">Provider Type</label>
+                        <select id="provider" required>
+                            <option value="github">GitHub</option>
+                            <option value="gitlab">GitLab (Self-hosted or GitLab.com)</option>
+                        </select>
+                    </div>
+                    <div class="form-group" style="margin-bottom: 1rem;">
+                        <label for="domain">Domain / API Host</label>
+                        <input type="text" id="domain" required placeholder="e.g. github.com or gitlab.example.com">
+                    </div>
+                    <div class="form-group" style="margin-bottom: 1rem;">
+                        <label for="username">Username / Account ID</label>
+                        <input type="text" id="username" required placeholder="Git username">
                     </div>
                     <div class="form-group" style="margin-bottom: 1rem;">
                         <label for="token">Personal Access Token (PAT)</label>
                         <div class="password-container">
-                            <input type="password" id="token" required placeholder="ghp_xxxxxxxxxxxx">
+                            <input type="password" id="token" required placeholder="Token string">
                             <button type="button" class="password-toggle" id="token-toggle">Show</button>
                         </div>
                     </div>
                     <div class="form-group" style="margin-bottom: 1rem;">
-                        <label for="local-path">Local Destination Path</label>
-                        <input type="text" id="local-path" required placeholder="e.g. /home/user/github_sync">
-                    </div>
-                    <div class="form-group" style="margin-bottom: 1rem;">
-                        <label for="sync-interval">Sync Interval (seconds)</label>
-                        <input type="number" id="sync-interval" required min="10" placeholder="3600">
+                        <label for="local-path">Local Directory Path</label>
+                        <input type="text" id="local-path" required placeholder="e.g. /var/git_mirrors">
                     </div>
                     <div class="form-group" style="margin-bottom: 1.5rem;">
-                        <label for="web-port">Web UI Port (Requires Restart)</label>
-                        <input type="number" id="web-port" required min="1024" max="65535" placeholder="9090">
+                        <label for="sync-interval">Sync Interval (seconds)</label>
+                        <input type="number" id="sync-interval" required min="10" placeholder="3600">
                     </div>
                     <button type="submit" class="btn" style="width: 100%;">
                         Save Configuration
@@ -567,6 +638,7 @@
                 </form>
             </div>
 
+            <!-- Actions Card -->
             <div class="card glass">
                 <div class="card-title">Actions</div>
                 <div style="display: flex; flex-direction: column; gap: 0.75rem;">
@@ -633,7 +705,7 @@
                         <tbody id="repo-list-body">
                             <tr>
                                 <td colspan="4" style="text-align: center; color: var(--text-muted); padding: 2rem;">
-                                    No repositories tracked yet. Fill configuration to fetch and synchronize.
+                                    No repositories tracked for this profile. Trigger a sync cycle to fetch and clone.
                                 </td>
                             </tr>
                         </tbody>
@@ -644,17 +716,17 @@
             <!-- Console Logs -->
             <div class="logs-section">
                 <div style="display: flex; justify-content: space-between; align-items: center;">
-                    <span style="font-size: 1rem; font-weight: 600;">Service Logs</span>
+                    <span style="font-size: 1rem; font-weight: 600;">Active Profile Logs</span>
                     <button id="clear-console-btn" style="background: none; border: none; color: var(--text-muted); cursor: pointer; font-size: 0.8rem; font-family: inherit;">Clear Console View</button>
                 </div>
                 <div class="console" id="console-logs">
-                    <!-- Logs will go here -->
+                    <!-- Dynamic logs -->
                 </div>
             </div>
         </div>
     </div>
 
-    <!-- Toast message -->
+    <!-- Toast -->
     <div id="toast" class="toast">
         <span id="toast-message">Success!</span>
     </div>
@@ -662,17 +734,25 @@
     <script>
         // DOM Elements
         const configForm = document.getElementById('config-form');
+        const configCardTitle = document.getElementById('config-card-title');
+        
+        const profileNameInput = document.getElementById('profile-name');
+        const providerSelect = document.getElementById('provider');
+        const domainInput = document.getElementById('domain');
         const usernameInput = document.getElementById('username');
         const tokenInput = document.getElementById('token');
         const tokenToggle = document.getElementById('token-toggle');
         const localPathInput = document.getElementById('local-path');
         const syncIntervalInput = document.getElementById('sync-interval');
-        const webPortInput = document.getElementById('web-port');
+        
+        const addProfileBtn = document.getElementById('add-profile-btn');
+        const profilesList = document.getElementById('profiles-list');
         
         const syncFullBtn = document.getElementById('sync-full-btn');
         const syncMissingBtn = document.getElementById('sync-missing-btn');
         const syncUpdatesBtn = document.getElementById('sync-updates-btn');
         const syncIcons = document.querySelectorAll('.sync-icon');
+        
         const systemStatusDot = document.getElementById('system-status-dot');
         const systemStatusText = document.getElementById('system-status-text');
         
@@ -688,9 +768,24 @@
         const toast = document.getElementById('toast');
         const toastMessage = document.getElementById('toast-message');
 
-        // State storage
+        // State vars
         let allRepos = [];
+        let allProfiles = [];
+        let activeProfileId = '';
+        let currentEditingProfileId = null; // null = creating new profile
         let isConfigSaving = false;
+
+        // Auto domain logic on provider change
+        providerSelect.addEventListener('change', () => {
+            if (currentEditingProfileId === null) {
+                if (providerSelect.value === 'github') {
+                    domainInput.value = 'github.com';
+                } else if (providerSelect.value === 'gitlab') {
+                    domainInput.value = '';
+                    domainInput.placeholder = 'gitlab.myvps.com';
+                }
+            }
+        });
 
         // Toggle Token Visibility
         tokenToggle.addEventListener('click', () => {
@@ -712,7 +807,7 @@
             }, 3000);
         }
 
-        // Fetch dashboard status
+        // Fetch Dashboard Status
         async function fetchStatus() {
             try {
                 const res = await fetch('/api/status');
@@ -724,6 +819,129 @@
                 systemStatusDot.className = "status-dot error";
                 systemStatusText.textContent = "Offline / Connection Lost";
             }
+        }
+
+        // Render Profiles List
+        function renderProfilesList(profiles, activeId) {
+            if (profiles.length === 0) {
+                profilesList.innerHTML = `
+                    <div style="text-align: center; color: var(--text-muted); font-size: 0.8rem; padding: 1.5rem 0;">
+                        No profiles configured. Create one below to begin.
+                    </div>
+                `;
+                return;
+            }
+
+            profilesList.innerHTML = profiles.map(p => {
+                const isActive = p.id === activeId;
+                const activeClass = isActive ? 'active' : '';
+                const providerText = p.provider === 'github' ? 'GitHub' : 'GitLab';
+                
+                return `
+                    <div class="profile-item ${activeClass}" onclick="selectProfile('${p.id}')">
+                        <div style="display: flex; flex-direction: column; gap: 0.15rem; flex-grow: 1; min-width: 0;">
+                            <span class="profile-name" style="white-space: nowrap; overflow: hidden; text-overflow: ellipsis;">${escapeHtml(p.name)}</span>
+                            <span class="profile-meta" style="white-space: nowrap; overflow: hidden; text-overflow: ellipsis;">${providerText} (${escapeHtml(p.domain)})</span>
+                        </div>
+                        <div style="display: flex; gap: 0.25rem;" onclick="event.stopPropagation();">
+                            <button class="profile-action-btn" title="Edit Configuration" onclick="editProfile('${p.id}')">✏️</button>
+                            <button class="profile-action-btn" title="Delete Profile" onclick="deleteProfile('${p.id}')">🗑️</button>
+                        </div>
+                    </div>
+                `;
+            }).join('');
+        }
+
+        // Switch Active Profile
+        async function selectProfile(id) {
+            if (id === activeProfileId) return; // Already active
+            
+            try {
+                const res = await fetch('/api/select_profile', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ id })
+                });
+                if (res.ok) {
+                    currentEditingProfileId = null; // Clear edit mode to load selected profile's default details
+                    configCardTitle.textContent = "Configure Profile";
+                    showToast("Switched active profile.");
+                    fetchStatus();
+                } else {
+                    showToast("Failed to switch profile.", "error");
+                }
+            } catch (err) {
+                console.error(err);
+                showToast("Network error switching profile.", "error");
+            }
+        }
+
+        // Edit Profile
+        function editProfile(id) {
+            const profile = allProfiles.find(p => p.id === id);
+            if (profile) {
+                currentEditingProfileId = id;
+                populateForm(profile);
+                configCardTitle.textContent = `Edit Profile: ${profile.name}`;
+                profileNameInput.focus();
+            }
+        }
+
+        // Delete Profile
+        async function deleteProfile(id) {
+            const p = allProfiles.find(x => x.id === id);
+            if (!p) return;
+            
+            if (!confirm(`Are you sure you want to delete profile '${p.name}'? This will delete its configurations and logs from the service.`)) {
+                return;
+            }
+
+            try {
+                const res = await fetch(`/api/profiles/${id}`, { method: 'DELETE' });
+                if (res.ok) {
+                    showToast("Profile deleted.");
+                    if (currentEditingProfileId === id) {
+                        currentEditingProfileId = null;
+                        configCardTitle.textContent = "Configure Profile";
+                        resetForm();
+                    }
+                    fetchStatus();
+                } else {
+                    showToast("Failed to delete profile.", "error");
+                }
+            } catch (err) {
+                console.error(err);
+                showToast("Network error deleting profile.", "error");
+            }
+        }
+
+        // Add Profile Button Click
+        addProfileBtn.addEventListener('click', () => {
+            currentEditingProfileId = null;
+            configCardTitle.textContent = "Configure Profile";
+            resetForm();
+            profileNameInput.focus();
+        });
+
+        // Form Helpers
+        function populateForm(p) {
+            profileNameInput.value = p.name;
+            providerSelect.value = p.provider;
+            domainInput.value = p.domain;
+            usernameInput.value = p.username;
+            tokenInput.value = p.token; // will be "********" if loaded from API
+            localPathInput.value = p.local_path;
+            syncIntervalInput.value = p.sync_interval_secs;
+        }
+
+        function resetForm() {
+            profileNameInput.value = '';
+            providerSelect.value = 'github';
+            domainInput.value = 'github.com';
+            usernameInput.value = '';
+            tokenInput.value = '';
+            localPathInput.value = '';
+            syncIntervalInput.value = '3600';
         }
 
         // Render repositories list
@@ -793,7 +1011,6 @@
 
         // Render console logs
         function renderLogs(logs) {
-            // Keep track of scroll position to auto-scroll if user was at the bottom
             const isScrolledToBottom = consoleLogs.scrollHeight - consoleLogs.clientHeight <= consoleLogs.scrollTop + 10;
             
             consoleLogs.innerHTML = logs.map(log => {
@@ -814,18 +1031,32 @@
 
         // Update complete UI based on API state
         function updateUI(data) {
-            // Configuration values (only update when the form is NOT active/dirty and we are not currently saving config)
-            if (document.activeElement.tagName !== 'INPUT' && !isConfigSaving) {
-                usernameInput.value = data.config.github_username || '';
-                tokenInput.value = data.config.github_token || '';
-                localPathInput.value = data.config.local_path || '';
-                syncIntervalInput.value = data.config.sync_interval_secs || 3600;
-                webPortInput.value = data.config.web_port || 9090;
+            allProfiles = data.profiles || [];
+            activeProfileId = data.active_profile_id || '';
+            
+            // 1. Render Profile Selection sidebar list
+            renderProfilesList(allProfiles, activeProfileId);
+
+            // 2. Populate Config Form if NOT focused and NOT saving
+            if (document.activeElement.tagName !== 'INPUT' && document.activeElement.tagName !== 'SELECT' && !isConfigSaving) {
+                if (currentEditingProfileId === null && activeProfileId) {
+                    const activeProfile = allProfiles.find(p => p.id === activeProfileId);
+                    if (activeProfile) {
+                        populateForm(activeProfile);
+                    } else {
+                        resetForm();
+                    }
+                }
             }
 
-            // Sync Status
-            const status = data.status; // "Idle", "Syncing", "Error"
-            systemStatusText.textContent = status === 'Syncing' ? 'Syncing Repositories...' : `Daemon: ${status}`;
+            // 3. System Status Badge & Icons
+            const status = data.status || 'Idle';
+            const activeProfile = allProfiles.find(p => p.id === activeProfileId);
+            const activeName = activeProfile ? activeProfile.name : 'No Active Profile';
+            
+            systemStatusText.textContent = status === 'Syncing' 
+                ? `Syncing '${activeName}'...` 
+                : `${activeName}: ${status}`;
             
             if (status === 'Syncing') {
                 systemStatusDot.className = "status-dot syncing";
@@ -836,22 +1067,22 @@
             } else {
                 systemStatusDot.className = `status-dot ${status === 'Error' ? 'error' : 'idle'}`;
                 syncIcons.forEach(icon => icon.classList.remove('spin'));
-                syncFullBtn.disabled = false;
-                syncMissingBtn.disabled = false;
-                syncUpdatesBtn.disabled = false;
+                syncFullBtn.disabled = !activeProfileId;
+                syncMissingBtn.disabled = !activeProfileId;
+                syncUpdatesBtn.disabled = !activeProfileId;
             }
 
-            // Stats
-            statTotal.textContent = data.repos.length;
-            statInterval.textContent = `${data.config.sync_interval_secs}s`;
+            // 4. Stats
+            statTotal.textContent = data.repos ? data.repos.length : 0;
+            statInterval.textContent = activeProfile ? `${activeProfile.sync_interval_secs}s` : '0s';
             statLastSync.textContent = data.last_sync_time ? new Date(data.last_sync_time).toLocaleString() : 'Never';
 
-            // Repositories List
-            allRepos = data.repos;
+            // 5. Repositories list
+            allRepos = data.repos || [];
             renderRepos(allRepos);
 
-            // Logs
-            renderLogs(data.logs);
+            // 6. Logs
+            renderLogs(data.logs || []);
         }
 
         // Filter repos on search input
@@ -865,41 +1096,52 @@
             isConfigSaving = true;
             
             const payload = {
-                github_username: usernameInput.value.trim(),
-                github_token: tokenInput.value.trim(),
+                id: currentEditingProfileId, // will be null if creating
+                name: profileNameInput.value.trim(),
+                provider: providerSelect.value,
+                domain: domainInput.value.trim(),
+                username: usernameInput.value.trim(),
+                token: tokenInput.value.trim(),
                 local_path: localPathInput.value.trim(),
-                sync_interval_secs: parseInt(syncIntervalInput.value) || 3600,
-                web_port: parseInt(webPortInput.value) || 9090
+                sync_interval_secs: parseInt(syncIntervalInput.value) || 3600
             };
 
             try {
-                const res = await fetch('/api/config', {
+                const res = await fetch('/api/profiles', {
                     method: 'POST',
                     headers: { 'Content-Type': 'application/json' },
                     body: JSON.stringify(payload)
                 });
                 
                 if (res.ok) {
-                    const responseData = await res.json();
-                    if (responseData.message) {
-                        showToast(responseData.message, 'success');
-                    } else {
-                        showToast("Configuration saved successfully.");
+                    const resData = await res.json();
+                    showToast(currentEditingProfileId ? "Profile updated." : "Profile created successfully.");
+                    currentEditingProfileId = null;
+                    configCardTitle.textContent = "Configure Profile";
+                    
+                    // Set active to the newly created/updated profile
+                    if (resData.profile_id) {
+                        await selectProfile(resData.profile_id);
                     }
                 } else {
-                    showToast("Failed to save configuration.", "error");
+                    showToast("Failed to save profile configuration.", "error");
                 }
             } catch (err) {
                 console.error(err);
-                showToast("Network error while saving configuration.", "error");
+                showToast("Network error saving configuration.", "error");
             } finally {
                 isConfigSaving = false;
                 fetchStatus();
             }
         });
 
-        // Sync action triggers
+        // Sync actions triggers
         async function runSync(mode) {
+            if (!activeProfileId) {
+                showToast("No active profile selected to sync.", "error");
+                return;
+            }
+
             try {
                 const res = await fetch(`/api/sync?mode=${mode}`, { method: 'POST' });
                 if (res.ok) {
@@ -918,7 +1160,7 @@
                 }
             } catch (err) {
                 console.error(err);
-                showToast("Network error when triggering sync.", "error");
+                showToast("Network error triggering sync.", "error");
             } finally {
                 fetchStatus();
             }

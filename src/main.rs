@@ -9,7 +9,7 @@ use std::sync::Arc;
 use tokio::sync::{RwLock, Notify};
 use std::path::PathBuf;
 
-use config::{Config, get_config_path, get_pid_path, get_log_path};
+use config::{Config, SyncProfile, get_config_path, get_pid_path, get_log_path};
 use daemon::{daemonize_process, stop_daemon, get_daemon_status};
 use state::SyncState;
 use sync::SyncWorker;
@@ -17,7 +17,7 @@ use web::start_web_server;
 
 #[derive(Parser)]
 #[command(name = "gitsync")]
-#[command(about = "GitSync Daemon - Synchronize and mirror all GitHub repos to local storage", long_about = None)]
+#[command(about = "GitSync Daemon - Synchronize and mirror all GitHub/GitLab repos to local storage", long_about = None)]
 struct Cli {
     #[command(subcommand)]
     command: Commands,
@@ -25,17 +25,33 @@ struct Cli {
 
 #[derive(Subcommand)]
 enum Commands {
-    /// Configure GitHub credentials and storage paths
+    /// Configure GitHub/GitLab profiles and storage paths
     Config {
-        /// GitHub username
+        /// ID of the profile to edit/create (default: active profile or 'default')
+        #[arg(long)]
+        profile: Option<String>,
+
+        /// Profile display name (e.g. 'Personal GitHub', 'My Self-hosted GitLab')
+        #[arg(long)]
+        name: Option<String>,
+
+        /// Git provider ('github' or 'gitlab')
+        #[arg(long)]
+        provider: Option<String>,
+
+        /// Custom domain (default: 'github.com' for GitHub)
+        #[arg(long)]
+        domain: Option<String>,
+
+        /// Git username
         #[arg(long)]
         username: Option<String>,
 
-        /// GitHub Personal Access Token (PAT)
+        /// Git Personal Access Token (PAT)
         #[arg(long)]
         token: Option<String>,
 
-        /// Local path where repositories will be synced: [path]/[username]/[repo_name]
+        /// Local storage path for syncing repositories
         #[arg(long)]
         path: Option<String>,
 
@@ -43,7 +59,11 @@ enum Commands {
         #[arg(long)]
         interval: Option<u64>,
 
-        /// Web UI server port (default: 9090)
+        /// Set this profile as active
+        #[arg(long)]
+        activate: bool,
+
+        /// Web UI server port (global setting, default: 9090)
         #[arg(long)]
         port: Option<u16>,
     },
@@ -61,7 +81,7 @@ enum Commands {
     /// Check daemon status and configurations
     Status,
 
-    /// Force immediate sync of all repositories
+    /// Force immediate sync of the active repository profile
     Sync,
 }
 
@@ -70,7 +90,18 @@ async fn main() {
     let cli = Cli::parse();
 
     match cli.command {
-        Commands::Config { username, token, path, interval, port } => {
+        Commands::Config {
+            profile,
+            name,
+            provider,
+            domain,
+            username,
+            token,
+            path,
+            interval,
+            activate,
+            port,
+        } => {
             let mut cfg = match Config::load() {
                 Ok(c) => c,
                 Err(e) => {
@@ -81,37 +112,85 @@ async fn main() {
 
             let mut updated = false;
 
-            if let Some(u) = username {
-                cfg.github_username = u;
-                updated = true;
-            }
-            if let Some(t) = token {
-                cfg.github_token = t;
-                updated = true;
-            }
-            if let Some(p) = path {
-                // Canonicalize if possible to store absolute path
-                let path_buf = PathBuf::from(&p);
-                cfg.local_path = if path_buf.is_absolute() {
-                    p
-                } else {
-                    match std::env::current_dir() {
-                        Ok(mut cwd) => {
-                            cwd.push(path_buf);
-                            cwd.to_string_lossy().into_owned()
-                        }
-                        Err(_) => p,
-                    }
-                };
-                updated = true;
-            }
-            if let Some(i) = interval {
-                cfg.sync_interval_secs = i;
-                updated = true;
-            }
+            // Handle global port update
             if let Some(prt) = port {
                 cfg.web_port = prt;
                 updated = true;
+            }
+
+            // Resolve which profile ID we are editing
+            let profile_id = profile.unwrap_or_else(|| {
+                if !cfg.active_profile_id.is_empty() {
+                    cfg.active_profile_id.clone()
+                } else {
+                    "default".to_string()
+                }
+            });
+
+            // Check if profile fields are specified to edit
+            let has_profile_updates = name.is_some()
+                || provider.is_some()
+                || domain.is_some()
+                || username.is_some()
+                || token.is_some()
+                || path.is_some()
+                || interval.is_some()
+                || activate;
+
+            if has_profile_updates {
+                // Find or create profile
+                let index = cfg.profiles.iter().position(|p| p.id == profile_id);
+                
+                let mut p = match index {
+                    Some(idx) => cfg.profiles[idx].clone(),
+                    None => SyncProfile {
+                        id: profile_id.clone(),
+                        name: profile_id.clone(),
+                        provider: "github".to_string(),
+                        domain: "github.com".to_string(),
+                        username: String::new(),
+                        token: String::new(),
+                        local_path: String::new(),
+                        sync_interval_secs: 3600,
+                    },
+                };
+
+                if let Some(n) = name { p.name = n; }
+                if let Some(prv) = provider { p.provider = prv; }
+                if let Some(dom) = domain { p.domain = dom; }
+                if let Some(u) = username { p.username = u; }
+                if let Some(t) = token { p.token = t; }
+                if let Some(pth) = path {
+                    let path_buf = PathBuf::from(&pth);
+                    p.local_path = if path_buf.is_absolute() {
+                        pth
+                    } else {
+                        match std::env::current_dir() {
+                            Ok(mut cwd) => {
+                                cwd.push(path_buf);
+                                cwd.to_string_lossy().into_owned()
+                            }
+                            Err(_) => pth,
+                        }
+                    };
+                }
+                if let Some(i) = interval { p.sync_interval_secs = i; }
+
+                match index {
+                    Some(idx) => {
+                        cfg.profiles[idx] = p;
+                    }
+                    None => {
+                        cfg.profiles.push(p);
+                    }
+                }
+
+                if activate || cfg.active_profile_id.is_empty() {
+                    cfg.active_profile_id = profile_id.clone();
+                }
+
+                updated = true;
+                println!("Profile '{}' updated successfully.", profile_id);
             }
 
             if updated {
@@ -119,20 +198,32 @@ async fn main() {
                     eprintln!("Failed to save config: {}", e);
                     std::process::exit(1);
                 }
-                println!("Configuration updated successfully.");
             }
 
             // Display configuration
-            println!("Current Configuration ({}):", get_config_path().to_string_lossy());
-            println!("  GitHub Username: {}", if cfg.github_username.is_empty() { "<not set>".to_string() } else { cfg.github_username });
-            println!("  GitHub Token:    {}", if cfg.github_token.is_empty() { "<not set>".to_string() } else { "******** (configured)".to_string() });
-            println!("  Local Sync Path: {}", if cfg.local_path.is_empty() { "<not set>".to_string() } else { cfg.local_path });
-            println!("  Sync Interval:   {} seconds", cfg.sync_interval_secs);
-            println!("  Web Port:        {}", cfg.web_port);
+            println!("\nGlobal Web UI Settings ({}):", get_config_path().to_string_lossy());
+            println!("  Web Host:          {}", cfg.web_host);
+            println!("  Web Port:          {}", cfg.web_port);
+            println!("  Active Profile ID: {}", if cfg.active_profile_id.is_empty() { "<none>".to_string() } else { cfg.active_profile_id.clone() });
+            
+            println!("\nConfigured Sync Profiles:");
+            if cfg.profiles.is_empty() {
+                println!("  <no profiles configured>");
+            } else {
+                for p in &cfg.profiles {
+                    let active_tag = if p.id == cfg.active_profile_id { " [ACTIVE]" } else { "" };
+                    println!("  - Profile ID: {}{}", p.id, active_tag);
+                    println!("    Name:       {}", p.name);
+                    println!("    Provider:   {} ({})", p.provider, p.domain);
+                    println!("    Username:   {}", p.username);
+                    println!("    Path:       {}", p.local_path);
+                    println!("    Interval:   {} seconds", p.sync_interval_secs);
+                    println!();
+                }
+            }
         }
 
         Commands::Start { background } => {
-            // Check status first
             match get_daemon_status() {
                 Ok((ref status, Some(pid))) if status == "Running" => {
                     println!("GitSync daemon is already running (PID {}).", pid);
@@ -144,7 +235,7 @@ async fn main() {
             let config = match Config::load() {
                 Ok(c) => c,
                 Err(e) => {
-                    eprintln!("Failed to load configuration: {}. Please run 'gitsync config' first.", e);
+                    eprintln!("Failed to load configuration: {}. Please configure at least one profile first.", e);
                     std::process::exit(1);
                 }
             };
@@ -156,33 +247,26 @@ async fn main() {
                     eprintln!("Failed to run in background: {}", e);
                     std::process::exit(1);
                 }
-                // Beyond this point, we are in the background daemon process!
             } else {
                 println!("Starting GitSync service in foreground...");
                 println!("Press Ctrl+C to terminate.");
             }
 
-            // Initialize State and Worker
             let web_host = config.web_host.clone();
             let web_port = config.web_port;
             
             let state = Arc::new(RwLock::new(SyncState::new(config)));
             let sync_trigger = Arc::new(Notify::new());
 
-            // Run first sync in a separate task so it starts immediately
             let state_clone = Arc::clone(&state);
             let trigger_clone = Arc::clone(&sync_trigger);
             
-            // Spawn worker
             tokio::spawn(async move {
                 let worker = SyncWorker::new(state_clone, trigger_clone);
-                // Trigger immediate initial sync
                 let _ = worker.perform_sync().await;
-                // Enter interval wait loop
                 worker.run_loop().await;
             });
 
-            // Start Axum web server
             println!("Starting Web UI server at http://{}:{}", web_host, web_port);
             if let Err(e) = start_web_server(state, sync_trigger, web_host, web_port).await {
                 eprintln!("Web server error: {}", e);
@@ -223,7 +307,6 @@ async fn main() {
             println!("  PID File:    {}", pid_path.to_string_lossy());
             println!("  Log File:    {}", log_path.to_string_lossy());
 
-            // Print log location information
             if log_path.exists() {
                 println!("\nLast 10 Log Entries:");
                 let log_cmd = std::process::Command::new("tail")
@@ -251,11 +334,14 @@ async fn main() {
                 }
             };
 
-            // Check if daemon is running
+            if config.active_profile_id.is_empty() {
+                eprintln!("No active profile is configured. Cannot sync.");
+                std::process::exit(1);
+            }
+
             match get_daemon_status() {
                 Ok((ref status, _)) if status == "Running" => {
-                    // Send POST request to running daemon Web API
-                    println!("Daemon is running. Triggering sync via API...");
+                    println!("Daemon is running. Triggering sync for active profile via API...");
                     let client = reqwest::Client::new();
                     let url = format!("http://{}:{}/api/sync", config.web_host, config.web_port);
                     
@@ -263,7 +349,7 @@ async fn main() {
                     match res {
                         Ok(response) => {
                             if response.status().is_success() {
-                                println!("Successfully triggered synchronization in background daemon.");
+                                println!("Successfully triggered synchronization for active profile in background daemon.");
                             } else {
                                 eprintln!("Daemon returned error status: {}", response.status());
                             }
@@ -274,7 +360,7 @@ async fn main() {
                     }
                 }
                 _ => {
-                    println!("Daemon is not running. Performing foreground sync...");
+                    println!("Daemon is not running. Performing foreground sync on active profile...");
                     
                     let state = Arc::new(RwLock::new(SyncState::new(config)));
                     let sync_trigger = Arc::new(Notify::new());
