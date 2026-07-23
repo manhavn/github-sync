@@ -960,6 +960,7 @@
                 if (!res.ok) throw new Error("HTTP error " + res.status);
                 const data = await res.json();
                 updateUI(data);
+                hideLoginOverlay();
             } catch (err) {
                 console.error("Error fetching status:", err);
                 if (err.message !== "Unauthorized") {
