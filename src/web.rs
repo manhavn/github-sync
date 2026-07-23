@@ -49,6 +49,7 @@ pub async fn start_web_server(
         .route("/select_profile", post(select_profile))
         .route("/toggle_auto_sync", post(toggle_auto_sync))
         .route("/sync", post(trigger_sync))
+        .route("/sync_repo", post(trigger_sync_repo))
         .layer(middleware::from_fn(auth_middleware));
 
     let app = Router::new()
@@ -306,3 +307,53 @@ async fn toggle_auto_sync(
     response.insert("success".to_string(), serde_json::Value::Bool(true));
     Json(serde_json::Value::Object(response))
 }
+
+#[derive(serde::Deserialize)]
+struct SyncRepoQuery {
+    repo: String,
+    mode: String,
+}
+
+async fn trigger_sync_repo(
+    axum::Extension(state): axum::Extension<Arc<RwLock<SyncState>>>,
+    axum::extract::Query(query): axum::extract::Query<SyncRepoQuery>,
+) -> Json<serde_json::Value> {
+    let repo = query.repo.clone();
+    let mode = query.mode.clone();
+
+    let active_id = {
+        let s = state.read().await;
+        s.active_profile_id.clone()
+    };
+    
+    if active_id.is_empty() {
+        let mut response = serde_json::Map::new();
+        response.insert("success".to_string(), serde_json::Value::Bool(false));
+        response.insert("message".to_string(), serde_json::Value::String("No active profile configured to sync.".to_string()));
+        return Json(serde_json::Value::Object(response));
+    }
+
+    {
+        let s = state.read().await;
+        let active_status = s.profile_states.get(&active_id).map(|st| st.status.clone()).unwrap_or_else(|| "Idle".to_string());
+        if active_status == "Syncing" {
+            let mut response = serde_json::Map::new();
+            response.insert("success".to_string(), serde_json::Value::Bool(false));
+            response.insert("message".to_string(), serde_json::Value::String("A sync operation is already running for this profile.".to_string()));
+            return Json(serde_json::Value::Object(response));
+        }
+    }
+
+    // Spawn the background task to perform the single repo sync
+    let state_clone = state.clone();
+    tokio::spawn(async move {
+        if let Err(e) = crate::sync::sync_single_repository(state_clone, &repo, &mode).await {
+            println!("Single repo sync error: {}", e);
+        }
+    });
+
+    let mut response = serde_json::Map::new();
+    response.insert("success".to_string(), serde_json::Value::Bool(true));
+    Json(serde_json::Value::Object(response))
+}
+

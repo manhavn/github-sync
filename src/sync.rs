@@ -445,3 +445,171 @@ async fn sync_repository(repo_dir: &Path, clone_url: &str, username: &str, token
 
     Ok(())
 }
+
+pub async fn sync_single_repository(
+    state: Arc<RwLock<SyncState>>,
+    repo_fullname: &str,
+    mode: &str, // "force" or "pull"
+) -> Result<(), String> {
+    let (profile, maybe_active_status) = {
+        let s = state.read().await;
+        let active_id = s.active_profile_id.clone();
+        let status = s.profile_states.get(&active_id).map(|st| st.status.clone()).unwrap_or_else(|| "Idle".to_string());
+        (s.get_active_profile().cloned(), status)
+    };
+
+    let profile = match profile {
+        Some(p) => p,
+        None => return Err("No active profile configured.".to_string()),
+    };
+
+    if maybe_active_status == "Syncing" {
+        return Err("A sync cycle is already in progress for this profile.".to_string());
+    }
+
+    if profile.username.is_empty() || profile.token.is_empty() {
+        return Err(format!("Credentials not configured for profile '{}'.", profile.name));
+    }
+    if profile.local_path.is_empty() {
+        return Err(format!("Local storage path not configured for profile '{}'.", profile.name));
+    }
+
+    let profile_id = profile.id.clone();
+    let provider = profile.provider.clone();
+    let domain = profile.domain.clone();
+    let username = profile.username.clone();
+    let token = profile.token.clone();
+    let local_path = profile.local_path.clone();
+
+    // Mark active state as Syncing during this operation to prevent overlapping syncs
+    {
+        let mut s = state.write().await;
+        let p_state = s.profile_states.entry(profile_id.clone()).or_insert_with(ProfileSyncState::new);
+        p_state.status = "Syncing".to_string();
+        p_state.add_log("INFO", &format!("Starting single repo sync for '{}' (Mode: {})...", repo_fullname, mode));
+        
+        if let Some(r) = p_state.repos.iter_mut().find(|r| r.full_name == repo_fullname) {
+            r.status = if Path::new(&local_path).join(repo_fullname).exists() { "Pulling".to_string() } else { "Cloning".to_string() };
+        }
+    }
+
+    let local_base_path = PathBuf::from(&local_path);
+    let repo_dir = local_base_path.join(repo_fullname);
+
+    // Default clone URL structure if remote fetching is skipped/fails
+    let clone_url = if provider.to_lowercase() == "gitlab" {
+        let clean_domain = domain.trim_start_matches("http://").trim_start_matches("https://").trim_end_matches('/');
+        format!("https://{}/{}.git", clean_domain, repo_fullname)
+    } else {
+        format!("https://github.com/{}.git", repo_fullname)
+    };
+
+    let mut maybe_private = false;
+    let mut resolved_clone_url = clone_url;
+
+    if mode == "force" {
+        let fetch_result = if provider.to_lowercase() == "gitlab" {
+            fetch_all_repos_gitlab(&domain, &token).await
+        } else {
+            fetch_all_repos_github(&token).await
+        };
+
+        match fetch_result {
+            Ok(repos) => {
+                if let Some(r) = repos.iter().find(|r| r.full_name == repo_fullname) {
+                    resolved_clone_url = r.clone_url.clone();
+                    maybe_private = r.private;
+                } else {
+                    let mut s = state.write().await;
+                    if let Some(p_state) = s.profile_states.get_mut(&profile_id) {
+                        p_state.status = "Idle".to_string();
+                        if let Some(r) = p_state.repos.iter_mut().find(|r| r.full_name == repo_fullname) {
+                            r.status = "Failed".to_string();
+                            r.error = Some("Repository not found on remote provider".to_string());
+                        }
+                        p_state.add_log("ERROR", &format!("Single repo sync failed: Repository '{}' not found on remote provider", repo_fullname));
+                    }
+                    return Err(format!("Repository '{}' not found on remote provider", repo_fullname));
+                }
+            }
+            Err(e) => {
+                let mut s = state.write().await;
+                if let Some(p_state) = s.profile_states.get_mut(&profile_id) {
+                    p_state.status = "Idle".to_string();
+                    if let Some(r) = p_state.repos.iter_mut().find(|r| r.full_name == repo_fullname) {
+                        r.status = "Failed".to_string();
+                        r.error = Some(format!("Failed to fetch remote metadata: {}", e));
+                    }
+                    p_state.add_log("ERROR", &format!("Single repo sync failed to fetch metadata: {}", e));
+                }
+                return Err(format!("Failed to fetch remote metadata: {}", e));
+            }
+        }
+    } else {
+        // Mode is "pull"
+        if !repo_dir.exists() {
+            let mut s = state.write().await;
+            if let Some(p_state) = s.profile_states.get_mut(&profile_id) {
+                p_state.status = "Idle".to_string();
+                if let Some(r) = p_state.repos.iter_mut().find(|r| r.full_name == repo_fullname) {
+                    r.status = "Failed".to_string();
+                    r.error = Some("Repository directory does not exist locally. Use 'force' sync to clone.".to_string());
+                }
+                p_state.add_log("ERROR", &format!("Single repo sync failed: Repository '{}' does not exist locally", repo_fullname));
+            }
+            return Err(format!("Repository '{}' does not exist locally. Use force sync to clone first.", repo_fullname));
+        }
+
+        // Get private status if exists in state
+        let s = state.read().await;
+        if let Some(p_state) = s.profile_states.get(&profile_id) {
+            if let Some(r) = p_state.repos.iter().find(|r| r.full_name == repo_fullname) {
+                maybe_private = r.is_private;
+            }
+        }
+    }
+
+    let sync_result = sync_repository(&repo_dir, &resolved_clone_url, &username, &token).await;
+
+    // Update state with result
+    {
+        let mut s = state.write().await;
+        let p_state = s.profile_states.entry(profile_id.clone()).or_insert_with(ProfileSyncState::new);
+        p_state.status = "Idle".to_string();
+        
+        let mut found = false;
+        if let Some(r) = p_state.repos.iter_mut().find(|r| r.full_name == repo_fullname) {
+            found = true;
+            r.last_sync = Some(Utc::now());
+            match &sync_result {
+                Ok(_) => {
+                    r.status = "Success".to_string();
+                    r.error = None;
+                    p_state.add_log("INFO", &format!("Successfully synced repository {}", repo_fullname));
+                }
+                Err(err_msg) => {
+                    r.status = "Failed".to_string();
+                    r.error = Some(err_msg.clone());
+                    p_state.add_log("ERROR", &format!("Failed to sync repository {}: {}", repo_fullname, err_msg));
+                }
+            }
+        }
+
+        if !found {
+            p_state.repos.push(RepoStatus {
+                name: repo_fullname.split('/').last().unwrap_or(repo_fullname).to_string(),
+                full_name: repo_fullname.to_string(),
+                status: match &sync_result {
+                    Ok(_) => "Success".to_string(),
+                    Err(_) => "Failed".to_string(),
+                },
+                error: sync_result.as_ref().err().cloned(),
+                last_sync: Some(Utc::now()),
+                is_private: maybe_private,
+            });
+        }
+    }
+
+    sync_result
+}
+

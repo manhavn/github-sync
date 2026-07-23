@@ -675,6 +675,55 @@
           border-radius: 50%;
         }
 
+        .repo-actions-cell {
+            display: flex;
+            gap: 0.5rem;
+            align-items: center;
+        }
+
+        .repo-action-btn {
+            background: rgba(255, 255, 255, 0.03);
+            border: 1px solid var(--panel-border);
+            cursor: pointer;
+            padding: 0.35rem;
+            display: inline-flex;
+            align-items: center;
+            justify-content: center;
+            border-radius: 6px;
+            color: var(--text-muted);
+            transition: all var(--transition-speed);
+        }
+
+        .repo-action-btn:hover {
+            color: var(--text-main);
+            background: rgba(255, 255, 255, 0.08);
+            border-color: rgba(255, 255, 255, 0.15);
+            transform: translateY(-1px);
+        }
+
+        .repo-action-btn:active {
+            transform: translateY(0);
+        }
+
+        .repo-action-btn:disabled {
+            opacity: 0.4;
+            cursor: not-allowed;
+            transform: none !important;
+            box-shadow: none !important;
+        }
+
+        .repo-action-btn.force-btn:hover:not(:disabled) {
+            color: #10b981;
+            border-color: rgba(16, 185, 129, 0.3);
+            box-shadow: 0 0 8px rgba(16, 185, 129, 0.15);
+        }
+
+        .repo-action-btn.pull-btn:hover:not(:disabled) {
+            color: #f59e0b;
+            border-color: rgba(245, 158, 11, 0.3);
+            box-shadow: 0 0 8px rgba(245, 158, 11, 0.15);
+        }
+
         /* Responsive Overrides (placed at the bottom to ensure correct precedence) */
         @media (max-width: 1024px) {
             body {
@@ -780,7 +829,8 @@
                 font-size: 0.8rem;
             }
 
-            th:nth-child(4), td:nth-child(4) {
+            th:nth-child(4), td:nth-child(4),
+            th:nth-child(5), td:nth-child(5) {
                 display: none;
             }
 
@@ -954,13 +1004,14 @@
                             <tr>
                                 <th>Repository</th>
                                 <th>Status</th>
+                                <th>Actions</th>
                                 <th>Last Sync</th>
                                 <th>Details</th>
                             </tr>
                         </thead>
                         <tbody id="repo-list-body">
                             <tr>
-                                <td colspan="4" style="text-align: center; color: var(--text-muted); padding: 2rem;">
+                                <td colspan="5" style="text-align: center; color: var(--text-muted); padding: 2rem;">
                                     No repositories tracked for this profile. Trigger a sync cycle to fetch and clone.
                                 </td>
                             </tr>
@@ -1126,6 +1177,7 @@
         let activeProfileId = '';
         let currentEditingProfileId = null; // null = creating new profile
         let isConfigSaving = false;
+        let isGlobalSyncing = false;
 
         // Auto domain logic on provider change
         providerSelect.addEventListener('change', () => {
@@ -1315,7 +1367,7 @@
             if (filtered.length === 0) {
                 repoListBody.innerHTML = `
                     <tr>
-                        <td colspan="4" style="text-align: center; color: var(--text-muted); padding: 2rem;">
+                        <td colspan="5" style="text-align: center; color: var(--text-muted); padding: 2rem;">
                             ${repos.length === 0 ? 'No repositories found.' : 'No matching repositories found.'}
                         </td>
                     </tr>
@@ -1339,6 +1391,8 @@
                     errorDetails = `<div style="color: var(--danger); font-size: 0.75rem; margin-top: 0.25rem; font-family: monospace;">${escapeHtml(r.error)}</div>`;
                 }
 
+                const disabledAttr = isGlobalSyncing ? 'disabled' : '';
+
                 return `
                     <tr>
                         <td>
@@ -1352,6 +1406,20 @@
                         <td>
                             <span class="badge ${badgeClass}">${statusText}</span>
                             ${errorDetails}
+                        </td>
+                        <td>
+                            <div class="repo-actions-cell">
+                                <button class="repo-action-btn force-btn" title="Force Sync" onclick="syncSingleRepo('${escapeHtml(r.full_name)}', 'force')" ${disabledAttr}>
+                                    <svg style="width: 14px; height: 14px; fill: currentColor;" viewBox="0 0 24 24">
+                                        <path d="M19 8l-4 4h3c0 3.31-2.69 6-6 6-1.01 0-1.97-.25-2.8-.7l-1.46 1.46C8.97 19.54 10.43 20 12 20c4.42 0 8-3.58 8-8h3l-4-4zM6 12c0-3.31 2.69-6 6-6 1.01 0 1.97.25 2.8.7l1.46-1.46C15.03 4.46 13.57 4 12 4c-4.42 0-8 3.58-8 8H1l4 4 4-4H6z"/>
+                                    </svg>
+                                </button>
+                                <button class="repo-action-btn pull-btn" title="Pull Sync" onclick="syncSingleRepo('${escapeHtml(r.full_name)}', 'pull')" ${disabledAttr}>
+                                    <svg style="width: 14px; height: 14px; fill: currentColor;" viewBox="0 0 24 24">
+                                        <path d="M4 20h16v-2H4v2zm8-3l5-5h-4V4h-2v8H7l5 5z"/>
+                                    </svg>
+                                </button>
+                            </div>
                         </td>
                         <td>${lastSyncStr}</td>
                         <td><span style="font-size: 0.8rem; color: var(--text-muted);">Local mirror configured</span></td>
@@ -1423,6 +1491,7 @@
 
             // 3. System Status Badge & Icons
             const status = data.status || 'Idle';
+            isGlobalSyncing = (status === 'Syncing');
             const activeProfile = allProfiles.find(p => p.id === activeProfileId);
             const activeName = activeProfile ? activeProfile.name : 'No Active Profile';
             
@@ -1538,6 +1607,35 @@
                 showToast("Network error triggering sync.", "error");
             } finally {
                 fetchStatus();
+            }
+        }
+
+        async function syncSingleRepo(repoFullName, mode) {
+            if (isGlobalSyncing) {
+                showToast("A sync cycle is already in progress.", "error");
+                return;
+            }
+
+            try {
+                const encodedRepo = encodeURIComponent(repoFullName);
+                const res = await authenticatedFetch(`/api/sync_repo?repo=${encodedRepo}&mode=${mode}`, {
+                    method: 'POST'
+                });
+                
+                if (res.ok) {
+                    const data = await res.json();
+                    if (data.success) {
+                        showToast(`Single repo sync (${mode}) initiated.`);
+                        fetchStatus();
+                    } else {
+                        showToast(data.message || "Failed to trigger sync.", "error");
+                    }
+                } else {
+                    showToast("Failed to trigger sync.", "error");
+                }
+            } catch (err) {
+                console.error(err);
+                showToast("Network error triggering sync.", "error");
             }
         }
 
