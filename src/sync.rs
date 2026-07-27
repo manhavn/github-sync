@@ -446,10 +446,154 @@ async fn sync_repository(repo_dir: &Path, clone_url: &str, username: &str, token
     Ok(())
 }
 
+async fn reset_hard_repository(repo_dir: &Path, clone_url: &str, username: &str, token: &str) -> Result<(), String> {
+    let helper_val = format!("!f() {{ echo username={}; echo password={}; }}; f", username, token);
+
+    if repo_dir.exists() {
+        // 1. Reset uncommitted changes and clean untracked files
+        let _ = tokio::process::Command::new("git")
+            .current_dir(repo_dir)
+            .args(&["reset", "--hard", "HEAD"])
+            .env("GIT_TERMINAL_PROMPT", "0")
+            .output()
+            .await;
+
+        let _ = tokio::process::Command::new("git")
+            .current_dir(repo_dir)
+            .args(&["clean", "-fd"])
+            .env("GIT_TERMINAL_PROMPT", "0")
+            .output()
+            .await;
+
+        // 2. Fetch all branches and tags from remote with pruning and force tag updates
+        let fetch_output = tokio::process::Command::new("git")
+            .arg("-c")
+            .arg(format!("credential.helper={}", helper_val))
+            .current_dir(repo_dir)
+            .args(&["fetch", "--all", "--prune", "--prune-tags", "--tags", "--force"])
+            .env("GIT_TERMINAL_PROMPT", "0")
+            .output()
+            .await
+            .map_err(|e| format!("Failed to execute git fetch: {}", e))?;
+
+        if !fetch_output.status.success() {
+            let err = String::from_utf8_lossy(&fetch_output.stderr).into_owned();
+            return Err(format!("git fetch failed: {}", err));
+        }
+
+        // 3. Determine current branch name
+        let branch_output = tokio::process::Command::new("git")
+            .current_dir(repo_dir)
+            .args(&["rev-parse", "--abbrev-ref", "HEAD"])
+            .env("GIT_TERMINAL_PROMPT", "0")
+            .output()
+            .await;
+
+        let curr_branch = match branch_output {
+            Ok(output) if output.status.success() => {
+                String::from_utf8_lossy(&output.stdout).trim().to_string()
+            }
+            _ => "main".to_string(),
+        };
+
+        // Reset to origin/{curr_branch} if it exists
+        let has_remote_branch = if !curr_branch.is_empty() && curr_branch != "HEAD" {
+            let check_output = tokio::process::Command::new("git")
+                .current_dir(repo_dir)
+                .args(&["rev-parse", "--verify", &format!("origin/{}", curr_branch)])
+                .env("GIT_TERMINAL_PROMPT", "0")
+                .output()
+                .await;
+            check_output.map(|o| o.status.success()).unwrap_or(false)
+        } else {
+            false
+        };
+
+        let target_ref = if has_remote_branch {
+            format!("origin/{}", curr_branch)
+        } else {
+            let check_main = tokio::process::Command::new("git")
+                .current_dir(repo_dir)
+                .args(&["rev-parse", "--verify", "origin/main"])
+                .env("GIT_TERMINAL_PROMPT", "0")
+                .output()
+                .await
+                .map(|o| o.status.success())
+                .unwrap_or(false);
+
+            let check_master = if !check_main {
+                tokio::process::Command::new("git")
+                    .current_dir(repo_dir)
+                    .args(&["rev-parse", "--verify", "origin/master"])
+                    .env("GIT_TERMINAL_PROMPT", "0")
+                    .output()
+                    .await
+                    .map(|o| o.status.success())
+                    .unwrap_or(false)
+            } else {
+                false
+            };
+
+            if check_main {
+                "origin/main".to_string()
+            } else if check_master {
+                "origin/master".to_string()
+            } else {
+                "FETCH_HEAD".to_string()
+            }
+        };
+
+        let reset_output = tokio::process::Command::new("git")
+            .current_dir(repo_dir)
+            .args(&["reset", "--hard", &target_ref])
+            .env("GIT_TERMINAL_PROMPT", "0")
+            .output()
+            .await
+            .map_err(|e| format!("Failed to execute git reset: {}", e))?;
+
+        if !reset_output.status.success() {
+            let err = String::from_utf8_lossy(&reset_output.stderr).into_owned();
+            return Err(format!("git reset --hard failed: {}", err));
+        }
+
+        // 4. Final clean -fd
+        let _ = tokio::process::Command::new("git")
+            .current_dir(repo_dir)
+            .args(&["clean", "-fd"])
+            .env("GIT_TERMINAL_PROMPT", "0")
+            .output()
+            .await;
+    } else {
+        // Ensure parent dir exists
+        if let Some(parent) = repo_dir.parent() {
+            tokio::fs::create_dir_all(parent)
+                .await
+                .map_err(|e| format!("Failed to create repo parent dir: {}", e))?;
+        }
+
+        // Run git clone
+        let clone_output = tokio::process::Command::new("git")
+            .arg("-c")
+            .arg(format!("credential.helper={}", helper_val))
+            .args(&["clone", clone_url, repo_dir.to_str().ok_or("Invalid path string")?])
+            .env("GIT_TERMINAL_PROMPT", "0")
+            .output()
+            .await
+            .map_err(|e| format!("Failed to execute git clone: {}", e))?;
+
+        if !clone_output.status.success() {
+            let err = String::from_utf8_lossy(&clone_output.stderr).into_owned();
+            return Err(format!("git clone failed: {}", err));
+        }
+    }
+
+    Ok(())
+}
+
 pub async fn sync_single_repository(
     state: Arc<RwLock<SyncState>>,
     repo_fullname: &str,
-    mode: &str, // "force" or "pull"
+    mode: &str, // "force", "pull", or "reset_hard"
 ) -> Result<(), String> {
     let (profile, maybe_active_status) = {
         let s = state.read().await;
@@ -489,7 +633,13 @@ pub async fn sync_single_repository(
         p_state.add_log("INFO", &format!("Starting single repo sync for '{}' (Mode: {})...", repo_fullname, mode));
         
         if let Some(r) = p_state.repos.iter_mut().find(|r| r.full_name == repo_fullname) {
-            r.status = if Path::new(&local_path).join(repo_fullname).exists() { "Pulling".to_string() } else { "Cloning".to_string() };
+            r.status = if !Path::new(&local_path).join(repo_fullname).exists() {
+                "Cloning".to_string()
+            } else if mode == "reset_hard" {
+                "Resetting".to_string()
+            } else {
+                "Pulling".to_string()
+            };
         }
     }
 
@@ -507,7 +657,7 @@ pub async fn sync_single_repository(
     let mut maybe_private = false;
     let mut resolved_clone_url = clone_url;
 
-    if mode == "force" {
+    if mode == "force" || mode == "reset_hard" {
         let fetch_result = if provider.to_lowercase() == "gitlab" {
             fetch_all_repos_gitlab(&domain, &token).await
         } else {
@@ -519,7 +669,7 @@ pub async fn sync_single_repository(
                 if let Some(r) = repos.iter().find(|r| r.full_name == repo_fullname) {
                     resolved_clone_url = r.clone_url.clone();
                     maybe_private = r.private;
-                } else {
+                } else if !repo_dir.exists() {
                     let mut s = state.write().await;
                     if let Some(p_state) = s.profile_states.get_mut(&profile_id) {
                         p_state.status = "Idle".to_string();
@@ -533,16 +683,18 @@ pub async fn sync_single_repository(
                 }
             }
             Err(e) => {
-                let mut s = state.write().await;
-                if let Some(p_state) = s.profile_states.get_mut(&profile_id) {
-                    p_state.status = "Idle".to_string();
-                    if let Some(r) = p_state.repos.iter_mut().find(|r| r.full_name == repo_fullname) {
-                        r.status = "Failed".to_string();
-                        r.error = Some(format!("Failed to fetch remote metadata: {}", e));
+                if !repo_dir.exists() {
+                    let mut s = state.write().await;
+                    if let Some(p_state) = s.profile_states.get_mut(&profile_id) {
+                        p_state.status = "Idle".to_string();
+                        if let Some(r) = p_state.repos.iter_mut().find(|r| r.full_name == repo_fullname) {
+                            r.status = "Failed".to_string();
+                            r.error = Some(format!("Failed to fetch remote metadata: {}", e));
+                        }
+                        p_state.add_log("ERROR", &format!("Single repo sync failed to fetch metadata: {}", e));
                     }
-                    p_state.add_log("ERROR", &format!("Single repo sync failed to fetch metadata: {}", e));
+                    return Err(format!("Failed to fetch remote metadata: {}", e));
                 }
-                return Err(format!("Failed to fetch remote metadata: {}", e));
             }
         }
     } else {
@@ -569,7 +721,11 @@ pub async fn sync_single_repository(
         }
     }
 
-    let sync_result = sync_repository(&repo_dir, &resolved_clone_url, &username, &token).await;
+    let sync_result = if mode == "reset_hard" {
+        reset_hard_repository(&repo_dir, &resolved_clone_url, &username, &token).await
+    } else {
+        sync_repository(&repo_dir, &resolved_clone_url, &username, &token).await
+    };
 
     // Update state with result
     {
@@ -577,6 +733,7 @@ pub async fn sync_single_repository(
         let p_state = s.profile_states.entry(profile_id.clone()).or_insert_with(ProfileSyncState::new);
         p_state.status = "Idle".to_string();
         
+        let action_past = if mode == "reset_hard" { "reset hard" } else { "synced" };
         let mut found = false;
         if let Some(r) = p_state.repos.iter_mut().find(|r| r.full_name == repo_fullname) {
             found = true;
@@ -585,12 +742,12 @@ pub async fn sync_single_repository(
                 Ok(_) => {
                     r.status = "Success".to_string();
                     r.error = None;
-                    p_state.add_log("INFO", &format!("Successfully synced repository {}", repo_fullname));
+                    p_state.add_log("INFO", &format!("Successfully {} repository {}", action_past, repo_fullname));
                 }
                 Err(err_msg) => {
                     r.status = "Failed".to_string();
                     r.error = Some(err_msg.clone());
-                    p_state.add_log("ERROR", &format!("Failed to sync repository {}: {}", repo_fullname, err_msg));
+                    p_state.add_log("ERROR", &format!("Failed to {} repository {}: {}", action_past, repo_fullname, err_msg));
                 }
             }
         }
@@ -612,4 +769,5 @@ pub async fn sync_single_repository(
 
     sync_result
 }
+
 

@@ -724,6 +724,12 @@
             box-shadow: 0 0 8px rgba(245, 158, 11, 0.15);
         }
 
+        .repo-action-btn.reset-btn:hover:not(:disabled) {
+            color: #ef4444;
+            border-color: rgba(239, 68, 68, 0.3);
+            box-shadow: 0 0 8px rgba(239, 68, 68, 0.15);
+        }
+
         /* Responsive Overrides (placed at the bottom to ensure correct precedence) */
         @media (max-width: 1024px) {
             body {
@@ -1380,7 +1386,7 @@
                 let statusText = r.status;
                 if (r.status === 'Success') badgeClass = 'success';
                 else if (r.status === 'Failed') badgeClass = 'failed';
-                else if (r.status === 'Cloning' || r.status === 'Pulling') badgeClass = 'syncing';
+                else if (r.status === 'Cloning' || r.status === 'Pulling' || r.status === 'Resetting') badgeClass = 'syncing';
                 
                 const lastSyncStr = r.last_sync ? new Date(r.last_sync).toLocaleString() : 'Never';
                 const tagClass = r.is_private ? 'private' : 'public';
@@ -1417,6 +1423,11 @@
                                 <button class="repo-action-btn pull-btn" title="Pull Sync" onclick="syncSingleRepo('${escapeHtml(r.full_name)}', 'pull')" ${disabledAttr}>
                                     <svg style="width: 14px; height: 14px; fill: currentColor;" viewBox="0 0 24 24">
                                         <path d="M4 20h16v-2H4v2zm8-3l5-5h-4V4h-2v8H7l5 5z"/>
+                                    </svg>
+                                </button>
+                                <button class="repo-action-btn reset-btn" title="Reset Hard" onclick="syncSingleRepo('${escapeHtml(r.full_name)}', 'reset_hard')" ${disabledAttr}>
+                                    <svg style="width: 14px; height: 14px; fill: currentColor;" viewBox="0 0 24 24">
+                                        <path d="M12.5 8c-2.65 0-5.05.99-6.9 2.6L2 7v9h9l-3.62-3.62c1.39-1.16 3.16-1.88 5.12-1.88 3.54 0 6.55 2.31 7.6 5.5l2.37-.78C21.08 11.03 17.15 8 12.5 8z"/>
                                     </svg>
                                 </button>
                             </div>
@@ -1625,7 +1636,11 @@
                 if (res.ok) {
                     const data = await res.json();
                     if (data.success) {
-                        showToast(`Single repo sync (${mode}) initiated.`);
+                        let modeLabel = mode;
+                        if (mode === 'reset_hard') modeLabel = 'Reset Hard';
+                        else if (mode === 'force') modeLabel = 'Force';
+                        else if (mode === 'pull') modeLabel = 'Pull';
+                        showToast(`Single repo sync (${modeLabel}) initiated.`);
                         fetchStatus();
                     } else {
                         showToast(data.message || "Failed to trigger sync.", "error");
