@@ -12,6 +12,8 @@ pub struct SyncProfile {
     pub token: String,
     pub local_path: String,
     pub sync_interval_secs: u64,
+    #[serde(default)]
+    pub auto_sync: bool,
 }
 
 #[derive(Serialize, Deserialize, Clone, Debug)]
@@ -109,6 +111,7 @@ impl Config {
                 token: github_token,
                 local_path,
                 sync_interval_secs,
+                auto_sync: false,
             };
             
             let migrated = Self {

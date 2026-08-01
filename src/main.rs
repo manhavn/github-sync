@@ -222,6 +222,7 @@ fn main() {
                         token: String::new(),
                         local_path: String::new(),
                         sync_interval_secs: 3600,
+                        auto_sync: false,
                     },
                 };
 

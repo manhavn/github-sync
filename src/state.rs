@@ -74,7 +74,9 @@ impl SyncState {
     pub fn new(config: Config) -> Self {
         let mut profile_states = HashMap::new();
         for p in &config.profiles {
-            profile_states.insert(p.id.clone(), ProfileSyncState::new());
+            let mut ps = ProfileSyncState::new();
+            ps.auto_sync = p.auto_sync;
+            profile_states.insert(p.id.clone(), ps);
         }
         
         Self {

@@ -166,6 +166,7 @@ async fn add_or_update_profile(
                 token: payload.token,
                 local_path: payload.local_path,
                 sync_interval_secs: payload.sync_interval_secs,
+                auto_sync: false,
             };
             
             config.profiles.push(new_profile.clone());
@@ -234,10 +235,14 @@ async fn select_profile(
 
     config.save().map_err(|_| axum::http::StatusCode::INTERNAL_SERVER_ERROR)?;
 
-    let p_state = s.profile_states.entry(payload.id).or_insert_with(ProfileSyncState::new);
-    p_state.auto_sync = false; // Disable auto sync by default when switching profiles!
+    let profile_auto_sync = config.profiles.iter().find(|p| p.id == payload.id).map(|p| p.auto_sync).unwrap_or(false);
+    let _p_state = s.profile_states.entry(payload.id.clone()).or_insert_with(|| {
+        let mut ps = ProfileSyncState::new();
+        ps.auto_sync = profile_auto_sync;
+        ps
+    });
     
-    s.add_log_to_active("INFO", "Switched active profile via Web UI. Auto Sync is disabled by default.");
+    s.add_log_to_active("INFO", "Switched active profile via Web UI.");
 
     let mut response = serde_json::Map::new();
     response.insert("success".to_string(), serde_json::Value::Bool(true));
@@ -295,9 +300,18 @@ async fn toggle_auto_sync(
     let mut s = state.write().await;
     let active_id = s.active_profile_id.clone();
     if !active_id.is_empty() {
-        let p_state = s.profile_states.entry(active_id).or_insert_with(ProfileSyncState::new);
+        let p_state = s.profile_states.entry(active_id.clone()).or_insert_with(ProfileSyncState::new);
         p_state.auto_sync = payload.enabled;
         p_state.add_log("INFO", &format!("Auto Sync toggled to: {}", payload.enabled));
+        if let Some(p) = s.profiles.iter_mut().find(|p| p.id == active_id) {
+            p.auto_sync = payload.enabled;
+        }
+        if let Ok(mut config) = crate::config::Config::load() {
+            if let Some(p) = config.profiles.iter_mut().find(|p| p.id == active_id) {
+                p.auto_sync = payload.enabled;
+                let _ = config.save();
+            }
+        }
         if payload.enabled {
             // Trigger immediate sync cycle when auto sync is enabled
             trigger.notify_one();
