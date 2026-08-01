@@ -58,6 +58,7 @@ pub enum SyncMode {
     Full,
     MissingOnly,
     UpdatesOnly,
+    RetryFailed,
 }
 
 #[derive(Serialize, Deserialize, Clone, Debug)]

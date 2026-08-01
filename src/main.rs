@@ -443,6 +443,7 @@ fn main() {
                 let sync_mode = match mode.to_lowercase().as_str() {
                     "missing" => crate::state::SyncMode::MissingOnly,
                     "updates" => crate::state::SyncMode::UpdatesOnly,
+                    "retry" | "retryfailed" | "failed" => crate::state::SyncMode::RetryFailed,
                     _ => crate::state::SyncMode::Full,
                 };
 
@@ -450,6 +451,7 @@ fn main() {
                     crate::state::SyncMode::Full => "Full",
                     crate::state::SyncMode::MissingOnly => "MissingOnly",
                     crate::state::SyncMode::UpdatesOnly => "UpdatesOnly",
+                    crate::state::SyncMode::RetryFailed => "RetryFailed",
                 };
 
                 match get_daemon_status() {

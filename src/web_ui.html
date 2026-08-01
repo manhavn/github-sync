@@ -420,11 +420,33 @@
 
         .repo-table-container {
             overflow-x: auto;
+            width: 100%;
+            max-width: 100%;
+            -webkit-overflow-scrolling: touch;
             flex-grow: 1;
+        }
+
+        .repo-table-container::-webkit-scrollbar {
+            height: 8px;
+        }
+
+        .repo-table-container::-webkit-scrollbar-track {
+            background: rgba(255, 255, 255, 0.02);
+            border-radius: 4px;
+        }
+
+        .repo-table-container::-webkit-scrollbar-thumb {
+            background: rgba(255, 255, 255, 0.15);
+            border-radius: 4px;
+        }
+
+        .repo-table-container::-webkit-scrollbar-thumb:hover {
+            background: rgba(255, 255, 255, 0.3);
         }
 
         table {
             width: 100%;
+            min-width: 780px;
             border-collapse: collapse;
             text-align: left;
         }
@@ -974,6 +996,13 @@
                         </svg>
                         <span>Pull Updates Only (Offline API)</span>
                     </button>
+
+                    <button id="sync-retry-btn" class="btn" style="width: 100%; background: linear-gradient(135deg, #ef4444, #f97316); box-shadow: 0 4px 10px rgba(239, 68, 68, 0.2);">
+                        <svg class="sync-icon" style="width: 16px; height: 16px; fill: currentColor;" viewBox="0 0 24 24">
+                            <path d="M12 5V1L7 6l5 5V7c3.31 0 6 2.69 6 6 0 1.01-.25 1.97-.7 2.8l1.46 1.46C19.54 15.97 20 14.53 20 13c0-4.42-3.58-8-8-8zm-6.3 1.7L4.24 8.16C3.75 8.99 3.5 9.95 3.5 11c0 4.42 3.58 8 8 8v4l5-5-5-5v3c-3.31 0-6-2.69-6-6 0-1.01.25-1.97.7-2.8z"/>
+                        </svg>
+                        <span>Retry Failed & Unsynced</span>
+                    </button>
                 </div>
             </div>
         </div>
@@ -1141,6 +1170,7 @@
         const syncFullBtn = document.getElementById('sync-full-btn');
         const syncMissingBtn = document.getElementById('sync-missing-btn');
         const syncUpdatesBtn = document.getElementById('sync-updates-btn');
+        const syncRetryBtn = document.getElementById('sync-retry-btn');
         const syncIcons = document.querySelectorAll('.sync-icon');
         const autoSyncCheckbox = document.getElementById('auto-sync-checkbox');
         
@@ -1516,12 +1546,14 @@
                 syncFullBtn.disabled = true;
                 syncMissingBtn.disabled = true;
                 syncUpdatesBtn.disabled = true;
+                syncRetryBtn.disabled = true;
             } else {
                 systemStatusDot.className = `status-dot ${status === 'Error' ? 'error' : 'idle'}`;
                 syncIcons.forEach(icon => icon.classList.remove('spin'));
                 syncFullBtn.disabled = !activeProfileId;
                 syncMissingBtn.disabled = !activeProfileId;
                 syncUpdatesBtn.disabled = !activeProfileId;
+                syncRetryBtn.disabled = !activeProfileId;
             }
 
             // 3b. Update Auto Sync Checkbox
@@ -1607,6 +1639,7 @@
                         syncFullBtn.disabled = true;
                         syncMissingBtn.disabled = true;
                         syncUpdatesBtn.disabled = true;
+                        syncRetryBtn.disabled = true;
                     } else {
                         showToast(data.message || "Failed to trigger sync.", "error");
                     }
@@ -1657,6 +1690,14 @@
         syncFullBtn.addEventListener('click', () => runSync('Full'));
         syncMissingBtn.addEventListener('click', () => runSync('MissingOnly'));
         syncUpdatesBtn.addEventListener('click', () => runSync('UpdatesOnly'));
+        syncRetryBtn.addEventListener('click', () => {
+            const failedOrUnsynced = allRepos.filter(r => r.status === 'Failed' || !r.last_sync || r.status !== 'Success');
+            if (allRepos.length > 0 && failedOrUnsynced.length === 0) {
+                showToast("No failed or unsynced repositories to retry.", "info");
+                return;
+            }
+            runSync('RetryFailed');
+        });
 
         // Toggle Auto Sync Listener
         autoSyncCheckbox.addEventListener('change', async () => {

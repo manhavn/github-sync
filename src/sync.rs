@@ -181,6 +181,23 @@ impl SyncWorker {
                 continue;
             }
 
+            // If mode is RetryFailed, skip if repo already succeeded AND has a valid last_sync time
+            if sync_mode == crate::state::SyncMode::RetryFailed {
+                let is_already_success = {
+                    let s = self.state.read().await;
+                    s.profile_states.get(&profile_id)
+                        .and_then(|ps| ps.repos.iter().find(|r| r.full_name == *full_name))
+                        .map(|r| r.status == "Success" && r.last_sync.is_some())
+                        .unwrap_or(false)
+                };
+                if is_already_success {
+                    let mut s = self.state.write().await;
+                    let p_state = s.profile_states.entry(profile_id.clone()).or_insert_with(ProfileSyncState::new);
+                    p_state.add_log("INFO", &format!("[{}/{}] Skipping {} (already synced successfully).", idx + 1, repos.len(), full_name));
+                    continue;
+                }
+            }
+
             {
                 let mut s = self.state.write().await;
                 let p_state = s.profile_states.entry(profile_id.clone()).or_insert_with(ProfileSyncState::new);
